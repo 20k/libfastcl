@@ -55,9 +55,9 @@ void get_platform_ids(cl_platform_id* clSelectedPlatformID)
 
 std::string kstr = R"(
 __kernel
-void test_name()
+void test_name(__global const int* hello)
 {
-    printf("Hello");
+    printf("Hello %i", *hello);
 }
 )";
 
@@ -96,7 +96,7 @@ int main()
 
     assert(error == CL_SUCCESS);
 
-    cl_int build_err = clBuildProgram(prog, 1, &selected_device, "", nullptr, nullptr);
+    cl_int build_err = clBuildProgram(prog, 1, &selected_device, "-cl-kernel-arg-info", nullptr, nullptr);
 
     assert(prog);
 
@@ -124,11 +124,25 @@ int main()
 
     cl_kernel k = cl_kernels[0];
 
+    cl_mem mem = clCreateBuffer(ctx, CL_MEM_READ_WRITE, sizeof(cl_int), nullptr, nullptr);
+
+    cl_kernel_arg_type_qualifier access;
+    cl_int argresult = clGetKernelArgInfo(k, 0, CL_KERNEL_ARG_TYPE_QUALIFIER, sizeof(access), &access, nullptr);
+
+    std::cout << "AQUAL " << access << std::endl;
+
+    if(argresult != CL_SUCCESS)
+        printf("Aresult %i\n", argresult);
+
+    assert(argresult == CL_SUCCESS);
+
     cl_command_queue cqueue = clCreateCommandQueue(ctx, selected_device, 0, nullptr);
 
     size_t global[1] = {1};
     size_t local[1] = {1};
     size_t offset[1] = {0};
+
+    clSetKernelArg(k, 0, sizeof(cl_mem), &mem);
 
     clEnqueueNDRangeKernel(cqueue, k, 1, offset, global, local, 0, nullptr, nullptr);
 

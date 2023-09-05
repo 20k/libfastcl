@@ -9,6 +9,15 @@
 #include <iostream>
 #include "cl.h"
 
+template<typename T>
+auto to_native_type(T&& in)
+{
+    return std::forward<T>(in);
+}
+
+_cl_kernel* to_native_type(_cl_kernel* in);
+_cl_program* to_native_type(_cl_program* in);
+
 struct api_struct
 {
     boost::dll::shared_library lib;
@@ -19,12 +28,6 @@ struct api_struct
     }
 };
 
-struct _cl_kernel
-{
-    void* ptr = nullptr;
-    std::atomic_uint refc{0};
-};
-
 static api_struct api;
 
 template<typename T>
@@ -33,27 +36,223 @@ auto& get_ptr(const char* name)
     return api.lib.get<T>(name);
 }
 
-#define IMPORT(name) auto name##_ptr = get_ptr<decltype(name)>(#name);
+
+struct ref_counting
+{
+    std::atomic_uint refc{0};
+
+    void inc()
+    {
+        refc++;
+    }
+
+    bool dec()
+    {
+        return (--refc) == 0;
+    }
+};
+
+struct _cl_kernel : ref_counting
+{
+    void* ptr = nullptr;
+};
+
+#define IMPORT(name) inline auto name##_ptr = get_ptr<decltype(name)>(#name);
+
+IMPORT(clGetPlatformIDs);
+IMPORT(clGetPlatformInfo);
+IMPORT(clGetDeviceIDs);
+IMPORT(clGetDeviceInfo);
+IMPORT(clCreateSubDevices);
+IMPORT(clRetainDevice);
+IMPORT(clReleaseDevice);
+IMPORT(clSetDefaultDeviceCommandQueue);
+IMPORT(clGetDeviceAndHostTimer);
+IMPORT(clGetHostTimer);
+IMPORT(clCreateContext);
+IMPORT(clCreateContextFromType);
+IMPORT(clRetainContext);
+IMPORT(clReleaseContext);
+IMPORT(clGetContextInfo);
+IMPORT(clSetContextDestructorCallback);
+IMPORT(clCreateCommandQueueWithProperties);
+IMPORT(clRetainCommandQueue);
+IMPORT(clReleaseCommandQueue);
+IMPORT(clGetCommandQueueInfo);
+IMPORT(clCreateBuffer);
+IMPORT(clCreateSubBuffer);
+IMPORT(clCreateImage);
+IMPORT(clCreatePipe);
+IMPORT(clCreateBufferWithProperties);
+IMPORT(clCreateImageWithProperties);
+IMPORT(clRetainMemObject);
+IMPORT(clReleaseMemObject);
+IMPORT(clGetSupportedImageFormats);
+IMPORT(clGetMemObjectInfo);
+IMPORT(clGetImageInfo);
+IMPORT(clGetPipeInfo);
+IMPORT(clSetMemObjectDestructorCallback);
+IMPORT(clSVMAlloc);
+IMPORT(clSVMFree);
+IMPORT(clCreateSamplerWithProperties);
+IMPORT(clRetainSampler);
+IMPORT(clReleaseSampler);
+IMPORT(clCreateProgramWithSource);
+IMPORT(clCreateProgramWithBinary);
+IMPORT(clCreateProgramWithBuiltInKernels);
+IMPORT(clCreateProgramWithIL);
+IMPORT(clRetainProgram);
+IMPORT(clReleaseProgram);
+IMPORT(clBuildProgram);
+IMPORT(clCompileProgram);
+IMPORT(clLinkProgram);
+IMPORT(clSetProgramReleaseCallback);
+IMPORT(clSetProgramSpecializationConstant);
+IMPORT(clUnloadPlatformCompiler);
+IMPORT(clGetProgramInfo);
+IMPORT(clGetProgramBuildInfo);
+IMPORT(clCreateKernel);
+IMPORT(clCreateKernelsInProgram);
+IMPORT(clCloneKernel);
+IMPORT(clRetainKernel);
+IMPORT(clReleaseKernel);
+IMPORT(clSetKernelArg);
+IMPORT(clSetKernelArgSVMPointer);
+IMPORT(clSetKernelExecInfo);
+IMPORT(clGetKernelInfo);
+IMPORT(clGetKernelArgInfo);
+IMPORT(clGetKernelWorkGroupInfo);
+IMPORT(clGetKernelSubGroupInfo);
+IMPORT(clWaitForEvents);
+IMPORT(clGetEventInfo);
+IMPORT(clCreateUserEvent);
+IMPORT(clRetainEvent);
+IMPORT(clReleaseEvent);
+IMPORT(clSetUserEventStatus);
+IMPORT(clSetEventCallback);
+IMPORT(clGetEventProfilingInfo);
+IMPORT(clFlush);
+IMPORT(clFinish);
+IMPORT(clEnqueueReadBuffer);
+IMPORT(clEnqueueReadBufferRect);
+IMPORT(clEnqueueWriteBuffer);
+IMPORT(clEnqueueWriteBufferRect);
+IMPORT(clEnqueueFillBuffer);
+IMPORT(clEnqueueCopyBuffer);
+IMPORT(clEnqueueCopyBufferRect);
+IMPORT(clEnqueueReadImage);
+IMPORT(clEnqueueWriteImage);
+IMPORT(clEnqueueFillImage);
+IMPORT(clEnqueueCopyImage);
+IMPORT(clEnqueueCopyImageToBuffer);
+IMPORT(clEnqueueCopyBufferToImage);
+IMPORT(clEnqueueMapBuffer);
+IMPORT(clEnqueueMapImage);
+IMPORT(clEnqueueUnmapMemObject);
+IMPORT(clEnqueueMigrateMemObjects);
+IMPORT(clEnqueueNDRangeKernel);
+IMPORT(clEnqueueNativeKernel);
+IMPORT(clEnqueueMarkerWithWaitList);
+IMPORT(clEnqueueBarrierWithWaitList);
+IMPORT(clEnqueueSVMFree);
+IMPORT(clEnqueueSVMMemcpy);
+IMPORT(clEnqueueSVMMemFill);
+IMPORT(clEnqueueSVMMap);
+IMPORT(clEnqueueSVMUnmap);
+IMPORT(clEnqueueSVMMigrateMem);
+IMPORT(clCreateImage2D);
+IMPORT(clCreateImage3D);
+IMPORT(clEnqueueMarker);
+IMPORT(clEnqueueWaitForEvents);
+IMPORT(clEnqueueBarrier);
+IMPORT(clUnloadCompiler);
+//IMPORT(clGetExtensionFunctionAddress);
+IMPORT(clCreateCommandQueue);
+IMPORT(clCreateSampler);
+IMPORT(clEnqueueTask);
+
+///ok program flow:
+///make program from source
+///build program
+///extra program binary and save it to disk
+
+///pt 2: make program from binary
+///extract kernels from program
+///query kernel args with querying info
+
+///or pt 3: make program from source
+///extract kernels from program
+///query kernel args
+
+struct arg_info
+{
+    cl_kernel_arg_type_qualifier qual = 0;
+};
+
+struct kernel_data
+{
+    std::vector<arg_info> args;
+
+    void load_from_kernel(cl_kernel kern)
+    {
+        args.clear();
+
+        cl_uint argc = 0;
+        clGetKernelInfo_ptr(kern, CL_KERNEL_NUM_ARGS, sizeof(cl_uint), &argc, nullptr);
+
+        for(cl_uint i=0; i < argc; i++)
+        {
+            arg_info inf;
+            clGetKernelArgInfo_ptr(kern, i, CL_KERNEL_ARG_TYPE_QUALIFIER, sizeof(inf.qual), &inf.qual, nullptr);
+
+            args.push_back(inf);
+        }
+    }
+};
+
+struct _cl_program : ref_counting
+{
+    void* ptr = nullptr;
+
+    bool built_with_program_info = false;
+    bool built_from_source = false;
+
+    std::vector<kernel_data> load_kernel_arg_data()
+    {
+        std::vector<kernel_data> kernels;
+
+        cl_uint kernel_count = 0;
+
+        clCreateKernelsInProgram_ptr((_cl_program*)ptr, 0, nullptr, &kernel_count);
+
+        if(kernel_count == 0)
+            return {};
+
+        std::vector<cl_kernel> kerns;
+
+        kerns.resize(kernel_count);
+
+        clCreateKernelsInProgram_ptr((_cl_program*)ptr, kerns.size(), kerns.data(), nullptr);
+
+        for(auto& i : kerns)
+        {
+            kernel_data dat;
+            dat.load_from_kernel(i);
+
+            kernels.push_back(dat);
+
+            clReleaseKernel_ptr(i);
+        }
+
+        return kernels;
+    }
+};
 
 template<typename R, typename... Args>
 auto detect_args(R(*func)(Args...)){return std::tuple<Args...>();}
 
 template<typename R, typename... Args>
 auto detect_return(R(*func)(Args...)){return R();}
-
-template<typename T>
-auto to_native_type(T&& in)
-{
-    return std::forward<T>(in);
-}
-
-template<typename T>
-auto from_native_type(T&& in)
-{
-    static_assert(!std::is_same_v<T, cl_kernel>);
-
-    return in;
-}
 
 _cl_kernel* to_native_type(_cl_kernel* in)
 {
@@ -62,12 +261,19 @@ _cl_kernel* to_native_type(_cl_kernel* in)
     return reinterpret_cast<_cl_kernel*>(in->ptr);
 }
 
-_cl_kernel* make_from_native_kernel(_cl_kernel* in)
+_cl_program* to_native_type(_cl_program* in)
 {
-    _cl_kernel* ptr = new _cl_kernel();
-    ptr->ptr = in;
-    ptr->refc = 1;
-    return ptr;
+    assert(in->ptr);
+
+    return reinterpret_cast<_cl_program*>(in->ptr);
+}
+
+template<typename T>
+auto from_native_type(T&& in)
+{
+    static_assert(!std::is_same_v<T, cl_kernel> && !std::is_same_v<T, cl_program>);
+
+    return in;
 }
 
 template<typename Func, typename... T>
@@ -79,15 +285,28 @@ auto call(Func f, T&&... args)
         return from_native_type(f(to_native_type(args)...));
 }
 
-IMPORT(clRetainKernel);
-IMPORT(clReleaseKernel);
+cl_kernel make_from_native_kernel(void* in)
+{
+    _cl_kernel* ptr = new _cl_kernel();
+    ptr->ptr = in;
+    ptr->inc();
+    return ptr;
+}
+
+cl_program make_from_native_program(void* in)
+{
+    _cl_program* ptr = new _cl_program();
+    ptr->ptr = in;
+    ptr->inc();
+    return ptr;
+}
 
 cl_int clRetainKernel(cl_kernel kern)
 {
     if(kern == nullptr)
         return CL_INVALID_KERNEL;
 
-    kern->refc++;
+    kern->inc();
     return call(clRetainKernel_ptr, kern);
 }
 
@@ -96,7 +315,7 @@ cl_int clReleaseKernel(cl_kernel kern)
     if(kern == nullptr)
         return CL_INVALID_KERNEL;
 
-    bool should_delete = (--kern->refc) == 0;
+    bool should_delete = kern->dec();
     cl_int val = call(clReleaseKernel_ptr, kern);
 
     if(should_delete)
@@ -105,12 +324,9 @@ cl_int clReleaseKernel(cl_kernel kern)
     return val;
 }
 
-IMPORT(clCreateKernelsInProgram);
-IMPORT(clCreateKernel);
-
 cl_int clCreateKernelsInProgram(cl_program program, cl_uint num_kernels, cl_kernel* kernels, cl_uint* num_kernels_ret)
 {
-    cl_int err = clCreateKernelsInProgram_ptr(program, num_kernels, kernels, num_kernels_ret);
+    cl_int err = clCreateKernelsInProgram_ptr(to_native_type(program), num_kernels, kernels, num_kernels_ret);
 
     if(num_kernels != 0 && kernels)
     {
@@ -125,28 +341,84 @@ cl_int clCreateKernelsInProgram(cl_program program, cl_uint num_kernels, cl_kern
 
 cl_kernel clCreateKernel(cl_program program, const char* kernel_name, cl_int* errcode_ret)
 {
-    return make_from_native_kernel(clCreateKernel_ptr(program, kernel_name, errcode_ret));
+    return make_from_native_kernel(clCreateKernel_ptr(to_native_type(program), kernel_name, errcode_ret));
+}
+
+cl_int clRetainProgram(cl_program program)
+{
+    if(program == nullptr)
+        return CL_INVALID_PROGRAM;
+
+    program->inc();
+    return call(clRetainProgram_ptr, program);
+}
+
+cl_int clReleaseProgram(cl_program program)
+{
+    if(program == nullptr)
+        return CL_INVALID_PROGRAM;
+
+    bool should_delete = program->dec();
+    cl_int val = call(clReleaseProgram_ptr, program);
+
+    if(should_delete)
+        delete program;
+
+    return val;
+}
+
+cl_program clCreateProgramWithSource(cl_context ctx, cl_uint count, const char** strings, const size_t* lengths, cl_int* errcode_ret)
+{
+    cl_program prog = make_from_native_program(clCreateProgramWithSource_ptr(ctx, count, strings, lengths, errcode_ret));
+
+    prog->built_from_source = true;
+
+    return prog;
+}
+
+cl_int clBuildProgram(cl_program program, cl_uint num_devices, const cl_device_id* device_list, const char* options, void (CL_CALLBACK *  pfn_notify)(cl_program program, void * user_data), void* user_data)
+{
+    cl_int ret = call(clBuildProgram_ptr, program, num_devices, device_list, options, pfn_notify, user_data);
+
+    if(options)
+    {
+        std::string opt(options);
+
+        if(opt.contains("-cl-kernel-arg-info"))
+        {
+            program->built_with_program_info = true;
+        }
+    }
+
+    program->load_kernel_arg_data();
+
+    return ret;
+}
+
+cl_int clGetProgramInfo(cl_program program, cl_program_info param_name, size_t param_value_size, void* param_value, size_t* param_value_size_ret)
+{
+    return clGetProgramInfo_ptr(program, param_name, param_value_size, param_value, param_value_size_ret);
 }
 
 #define NAME_TYPE(name, idx) std::remove_cvref_t<decltype(std::get<idx>(detect_args(name##_ptr)))>
 #define NAME_RETURN(name) std::remove_cvref_t<decltype(detect_return(name##_ptr))>
 
-#define SHIM_0(name) IMPORT(name); auto name(void) -> NAME_RETURN(name) {return call(name##_ptr);}
-#define SHIM_1(name) IMPORT(name); auto name(NAME_TYPE(name, 0) a0) -> NAME_RETURN(name) {return call(name##_ptr, a0);}
-#define SHIM_2(name) IMPORT(name); auto name(NAME_TYPE(name, 0) a0, NAME_TYPE(name, 1) a1) -> NAME_RETURN(name) {return call(name##_ptr, a0, a1);}
-#define SHIM_3(name) IMPORT(name); auto name(NAME_TYPE(name, 0) a0, NAME_TYPE(name, 1) a1, NAME_TYPE(name, 2) a2) -> NAME_RETURN(name) {return call(name##_ptr, a0, a1, a2);}
-#define SHIM_4(name) IMPORT(name); auto name(NAME_TYPE(name, 0) a0, NAME_TYPE(name, 1) a1, NAME_TYPE(name, 2) a2, NAME_TYPE(name, 3) a3) -> NAME_RETURN(name) {return call(name##_ptr, a0, a1, a2, a3);}
-#define SHIM_5(name) IMPORT(name); auto name(NAME_TYPE(name, 0) a0, NAME_TYPE(name, 1) a1, NAME_TYPE(name, 2) a2, NAME_TYPE(name, 3) a3, NAME_TYPE(name, 4) a4) -> NAME_RETURN(name) {return call(name##_ptr, a0, a1, a2, a3, a4);}
-#define SHIM_6(name) IMPORT(name); auto name(NAME_TYPE(name, 0) a0, NAME_TYPE(name, 1) a1, NAME_TYPE(name, 2) a2, NAME_TYPE(name, 3) a3, NAME_TYPE(name, 4) a4, NAME_TYPE(name, 5) a5) -> NAME_RETURN(name) {return call(name##_ptr, a0, a1, a2, a3, a4, a5);}
-#define SHIM_7(name) IMPORT(name); auto name(NAME_TYPE(name, 0) a0, NAME_TYPE(name, 1) a1, NAME_TYPE(name, 2) a2, NAME_TYPE(name, 3) a3, NAME_TYPE(name, 4) a4, NAME_TYPE(name, 5) a5, NAME_TYPE(name, 6) a6) -> NAME_RETURN(name) {return call(name##_ptr, a0, a1, a2, a3, a4, a5, a6);}
-#define SHIM_8(name) IMPORT(name); auto name(NAME_TYPE(name, 0) a0, NAME_TYPE(name, 1) a1, NAME_TYPE(name, 2) a2, NAME_TYPE(name, 3) a3, NAME_TYPE(name, 4) a4, NAME_TYPE(name, 5) a5, NAME_TYPE(name, 6) a6, NAME_TYPE(name, 7) a7) -> NAME_RETURN(name) {return call(name##_ptr, a0, a1, a2, a3, a4, a5, a6, a7);}
-#define SHIM_9(name) IMPORT(name); auto name(NAME_TYPE(name, 0) a0, NAME_TYPE(name, 1) a1, NAME_TYPE(name, 2) a2, NAME_TYPE(name, 3) a3, NAME_TYPE(name, 4) a4, NAME_TYPE(name, 5) a5, NAME_TYPE(name, 6) a6, NAME_TYPE(name, 7) a7, NAME_TYPE(name, 8) a8) -> NAME_RETURN(name) {return call(name##_ptr, a0, a1, a2, a3, a4, a5, a6, a7, a8);}
-#define SHIM_10(name) IMPORT(name); auto name(NAME_TYPE(name, 0) a0, NAME_TYPE(name, 1) a1, NAME_TYPE(name, 2) a2, NAME_TYPE(name, 3) a3, NAME_TYPE(name, 4) a4, NAME_TYPE(name, 5) a5, NAME_TYPE(name, 6) a6, NAME_TYPE(name, 7) a7, NAME_TYPE(name, 8) a8, NAME_TYPE(name, 9) a9) -> NAME_RETURN(name) {return call(name##_ptr, a0, a1, a2, a3, a4, a5, a6, a7, a8, a9);}
-#define SHIM_11(name) IMPORT(name); auto name(NAME_TYPE(name, 0) a0, NAME_TYPE(name, 1) a1, NAME_TYPE(name, 2) a2, NAME_TYPE(name, 3) a3, NAME_TYPE(name, 4) a4, NAME_TYPE(name, 5) a5, NAME_TYPE(name, 6) a6, NAME_TYPE(name, 7) a7, NAME_TYPE(name, 8) a8, NAME_TYPE(name, 9) a9, NAME_TYPE(name, 10) a10) -> NAME_RETURN(name) {return call(name##_ptr, a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10);}
-#define SHIM_12(name) IMPORT(name); auto name(NAME_TYPE(name, 0) a0, NAME_TYPE(name, 1) a1, NAME_TYPE(name, 2) a2, NAME_TYPE(name, 3) a3, NAME_TYPE(name, 4) a4, NAME_TYPE(name, 5) a5, NAME_TYPE(name, 6) a6, NAME_TYPE(name, 7) a7, NAME_TYPE(name, 8) a8, NAME_TYPE(name, 9) a9, NAME_TYPE(name, 10) a10, NAME_TYPE(name, 11) a11) -> NAME_RETURN(name) {return call(name##_ptr, a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11);}
-#define SHIM_13(name) IMPORT(name); auto name(NAME_TYPE(name, 0) a0, NAME_TYPE(name, 1) a1, NAME_TYPE(name, 2) a2, NAME_TYPE(name, 3) a3, NAME_TYPE(name, 4) a4, NAME_TYPE(name, 5) a5, NAME_TYPE(name, 6) a6, NAME_TYPE(name, 7) a7, NAME_TYPE(name, 8) a8, NAME_TYPE(name, 9) a9, NAME_TYPE(name, 10) a10, NAME_TYPE(name, 11) a11, NAME_TYPE(name, 12) a12) -> NAME_RETURN(name) {return call(name##_ptr, a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12);}
-#define SHIM_14(name) IMPORT(name); auto name(NAME_TYPE(name, 0) a0, NAME_TYPE(name, 1) a1, NAME_TYPE(name, 2) a2, NAME_TYPE(name, 3) a3, NAME_TYPE(name, 4) a4, NAME_TYPE(name, 5) a5, NAME_TYPE(name, 6) a6, NAME_TYPE(name, 7) a7, NAME_TYPE(name, 8) a8, NAME_TYPE(name, 9) a9, NAME_TYPE(name, 10) a10, NAME_TYPE(name, 11) a11, NAME_TYPE(name, 12) a12, NAME_TYPE(name, 13) a13) -> NAME_RETURN(name) {return call(name##_ptr, a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13);}
-#define SHIM_15(name) IMPORT(name); auto name(NAME_TYPE(name, 0) a0, NAME_TYPE(name, 1) a1, NAME_TYPE(name, 2) a2, NAME_TYPE(name, 3) a3, NAME_TYPE(name, 4) a4, NAME_TYPE(name, 5) a5, NAME_TYPE(name, 6) a6, NAME_TYPE(name, 7) a7, NAME_TYPE(name, 8) a8, NAME_TYPE(name, 9) a9, NAME_TYPE(name, 10) a10, NAME_TYPE(name, 11) a11, NAME_TYPE(name, 12) a12, NAME_TYPE(name, 13) a13, NAME_TYPE(name, 14) a14) -> NAME_RETURN(name) {return call(name##_ptr, a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14);}
+#define SHIM_0(name) auto name(void) -> NAME_RETURN(name) {return call(name##_ptr);}
+#define SHIM_1(name) auto name(NAME_TYPE(name, 0) a0) -> NAME_RETURN(name) {return call(name##_ptr, a0);}
+#define SHIM_2(name) auto name(NAME_TYPE(name, 0) a0, NAME_TYPE(name, 1) a1) -> NAME_RETURN(name) {return call(name##_ptr, a0, a1);}
+#define SHIM_3(name) auto name(NAME_TYPE(name, 0) a0, NAME_TYPE(name, 1) a1, NAME_TYPE(name, 2) a2) -> NAME_RETURN(name) {return call(name##_ptr, a0, a1, a2);}
+#define SHIM_4(name) auto name(NAME_TYPE(name, 0) a0, NAME_TYPE(name, 1) a1, NAME_TYPE(name, 2) a2, NAME_TYPE(name, 3) a3) -> NAME_RETURN(name) {return call(name##_ptr, a0, a1, a2, a3);}
+#define SHIM_5(name) auto name(NAME_TYPE(name, 0) a0, NAME_TYPE(name, 1) a1, NAME_TYPE(name, 2) a2, NAME_TYPE(name, 3) a3, NAME_TYPE(name, 4) a4) -> NAME_RETURN(name) {return call(name##_ptr, a0, a1, a2, a3, a4);}
+#define SHIM_6(name) auto name(NAME_TYPE(name, 0) a0, NAME_TYPE(name, 1) a1, NAME_TYPE(name, 2) a2, NAME_TYPE(name, 3) a3, NAME_TYPE(name, 4) a4, NAME_TYPE(name, 5) a5) -> NAME_RETURN(name) {return call(name##_ptr, a0, a1, a2, a3, a4, a5);}
+#define SHIM_7(name) auto name(NAME_TYPE(name, 0) a0, NAME_TYPE(name, 1) a1, NAME_TYPE(name, 2) a2, NAME_TYPE(name, 3) a3, NAME_TYPE(name, 4) a4, NAME_TYPE(name, 5) a5, NAME_TYPE(name, 6) a6) -> NAME_RETURN(name) {return call(name##_ptr, a0, a1, a2, a3, a4, a5, a6);}
+#define SHIM_8(name) auto name(NAME_TYPE(name, 0) a0, NAME_TYPE(name, 1) a1, NAME_TYPE(name, 2) a2, NAME_TYPE(name, 3) a3, NAME_TYPE(name, 4) a4, NAME_TYPE(name, 5) a5, NAME_TYPE(name, 6) a6, NAME_TYPE(name, 7) a7) -> NAME_RETURN(name) {return call(name##_ptr, a0, a1, a2, a3, a4, a5, a6, a7);}
+#define SHIM_9(name) auto name(NAME_TYPE(name, 0) a0, NAME_TYPE(name, 1) a1, NAME_TYPE(name, 2) a2, NAME_TYPE(name, 3) a3, NAME_TYPE(name, 4) a4, NAME_TYPE(name, 5) a5, NAME_TYPE(name, 6) a6, NAME_TYPE(name, 7) a7, NAME_TYPE(name, 8) a8) -> NAME_RETURN(name) {return call(name##_ptr, a0, a1, a2, a3, a4, a5, a6, a7, a8);}
+#define SHIM_10(name) auto name(NAME_TYPE(name, 0) a0, NAME_TYPE(name, 1) a1, NAME_TYPE(name, 2) a2, NAME_TYPE(name, 3) a3, NAME_TYPE(name, 4) a4, NAME_TYPE(name, 5) a5, NAME_TYPE(name, 6) a6, NAME_TYPE(name, 7) a7, NAME_TYPE(name, 8) a8, NAME_TYPE(name, 9) a9) -> NAME_RETURN(name) {return call(name##_ptr, a0, a1, a2, a3, a4, a5, a6, a7, a8, a9);}
+#define SHIM_11(name) auto name(NAME_TYPE(name, 0) a0, NAME_TYPE(name, 1) a1, NAME_TYPE(name, 2) a2, NAME_TYPE(name, 3) a3, NAME_TYPE(name, 4) a4, NAME_TYPE(name, 5) a5, NAME_TYPE(name, 6) a6, NAME_TYPE(name, 7) a7, NAME_TYPE(name, 8) a8, NAME_TYPE(name, 9) a9, NAME_TYPE(name, 10) a10) -> NAME_RETURN(name) {return call(name##_ptr, a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10);}
+#define SHIM_12(name) auto name(NAME_TYPE(name, 0) a0, NAME_TYPE(name, 1) a1, NAME_TYPE(name, 2) a2, NAME_TYPE(name, 3) a3, NAME_TYPE(name, 4) a4, NAME_TYPE(name, 5) a5, NAME_TYPE(name, 6) a6, NAME_TYPE(name, 7) a7, NAME_TYPE(name, 8) a8, NAME_TYPE(name, 9) a9, NAME_TYPE(name, 10) a10, NAME_TYPE(name, 11) a11) -> NAME_RETURN(name) {return call(name##_ptr, a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11);}
+#define SHIM_13(name) auto name(NAME_TYPE(name, 0) a0, NAME_TYPE(name, 1) a1, NAME_TYPE(name, 2) a2, NAME_TYPE(name, 3) a3, NAME_TYPE(name, 4) a4, NAME_TYPE(name, 5) a5, NAME_TYPE(name, 6) a6, NAME_TYPE(name, 7) a7, NAME_TYPE(name, 8) a8, NAME_TYPE(name, 9) a9, NAME_TYPE(name, 10) a10, NAME_TYPE(name, 11) a11, NAME_TYPE(name, 12) a12) -> NAME_RETURN(name) {return call(name##_ptr, a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12);}
+#define SHIM_14(name) auto name(NAME_TYPE(name, 0) a0, NAME_TYPE(name, 1) a1, NAME_TYPE(name, 2) a2, NAME_TYPE(name, 3) a3, NAME_TYPE(name, 4) a4, NAME_TYPE(name, 5) a5, NAME_TYPE(name, 6) a6, NAME_TYPE(name, 7) a7, NAME_TYPE(name, 8) a8, NAME_TYPE(name, 9) a9, NAME_TYPE(name, 10) a10, NAME_TYPE(name, 11) a11, NAME_TYPE(name, 12) a12, NAME_TYPE(name, 13) a13) -> NAME_RETURN(name) {return call(name##_ptr, a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13);}
+#define SHIM_15(name) auto name(NAME_TYPE(name, 0) a0, NAME_TYPE(name, 1) a1, NAME_TYPE(name, 2) a2, NAME_TYPE(name, 3) a3, NAME_TYPE(name, 4) a4, NAME_TYPE(name, 5) a5, NAME_TYPE(name, 6) a6, NAME_TYPE(name, 7) a7, NAME_TYPE(name, 8) a8, NAME_TYPE(name, 9) a9, NAME_TYPE(name, 10) a10, NAME_TYPE(name, 11) a11, NAME_TYPE(name, 12) a12, NAME_TYPE(name, 13) a13, NAME_TYPE(name, 14) a14) -> NAME_RETURN(name) {return call(name##_ptr, a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14);}
 
 //SHIM_1(clRetainKernel);
 //SHIM_1(clReleaseKernel);
@@ -189,19 +461,19 @@ SHIM_2(clSVMFree);
 SHIM_3(clCreateSamplerWithProperties);
 SHIM_1(clRetainSampler);
 SHIM_1(clReleaseSampler);
-SHIM_5(clCreateProgramWithSource);
-SHIM_7(clCreateProgramWithBinary);
-SHIM_5(clCreateProgramWithBuiltInKernels);
-SHIM_4(clCreateProgramWithIL);
-SHIM_1(clRetainProgram);
-SHIM_1(clReleaseProgram);
-SHIM_6(clBuildProgram);
-SHIM_9(clCompileProgram);
-SHIM_9(clLinkProgram);
+//SHIM_5(clCreateProgramWithSource);
+//SHIM_7(clCreateProgramWithBinary);
+//SHIM_5(clCreateProgramWithBuiltInKernels);
+//SHIM_4(clCreateProgramWithIL);
+//SHIM_1(clRetainProgram);
+//SHIM_1(clReleaseProgram);
+//SHIM_6(clBuildProgram);
+//SHIM_9(clCompileProgram); //TODO: LINK PROGRAM
+//SHIM_9(clLinkProgram); //TODO: LINK PROGRAM
 SHIM_3(clSetProgramReleaseCallback);
 SHIM_4(clSetProgramSpecializationConstant);
 SHIM_1(clUnloadPlatformCompiler);
-SHIM_5(clGetProgramInfo);
+//SHIM_5(clGetProgramInfo);
 SHIM_6(clGetProgramBuildInfo);
 //SHIM_3(clCreateKernel);
 //SHIM_4(clCreateKernelsInProgram);
