@@ -65,6 +65,7 @@ void test_name()
 ///detect unbuilt programs
 ///detect kernels with unset arguments
 ///improve performance
+///detect use after free
 
 int main()
 {
@@ -121,15 +122,21 @@ int main()
 
     cl_kernels.resize(num);
 
+    cl_kernel k = cl_kernels[0];
+
     cl_command_queue cqueue = clCreateCommandQueue(ctx, selected_device, 0, nullptr);
 
     size_t global[1] = {1};
     size_t local[1] = {1};
     size_t offset[1] = {0};
 
-    clEnqueueNDRangeKernel(cqueue, cl_kernels.at(0), 1, offset, global, local, 0, nullptr, nullptr);
+    clEnqueueNDRangeKernel(cqueue, k, 1, offset, global, local, 0, nullptr, nullptr);
 
     clFinish(cqueue);
+
+    clReleaseKernel(k);
+
+    //clFinish(cqueue);
 
     printf("Done!\n");
 
