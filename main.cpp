@@ -3,6 +3,7 @@
 #include <vector>
 #include <string.h>
 #include <assert.h>
+#include <fstream>
 
 static
 void get_platform_ids(cl_platform_id* clSelectedPlatformID)
@@ -61,6 +62,35 @@ void test_name(__global const int* hello)
 }
 )";
 
+std::string read_impl(const std::string& file)
+{
+    const char* fmode = "rb";
+
+    FILE* f = fopen(file.c_str(), fmode);
+
+    if(f == nullptr)
+        return "";
+
+    fseek(f, 0, SEEK_END);
+    long fsize = ftell(f);
+    fseek(f, 0, SEEK_SET);
+
+    if(fsize == -1L)
+    {
+        fclose(f);
+        return "";
+    }
+
+    std::string buffer;
+    buffer.resize(fsize);
+    size_t real = fread(buffer.data(), 1, fsize, f);
+    buffer.resize(real);
+
+    fclose(f);
+
+    return buffer;
+}
+
 ///TODO:
 ///detect unbuilt programs
 ///detect kernels with unset arguments
@@ -92,13 +122,52 @@ int main()
 
     const char* ptr = kstr.c_str();
 
-    cl_program prog = clCreateProgramWithSource(ctx, 1, &ptr, nullptr, &error);
+    cl_program prog;
+
+    {
+        std::fstream bin("binary_cache");
+
+        if(bin.good())
+        {
+            std::string data = read_impl("binary_cache");
+
+            size_t length = data.size();
+            const unsigned char* binary = (unsigned char*)data.data();
+
+            prog = clCreateProgramWithBinary(ctx, 1, &selected_device, &length, &binary, nullptr, &error);
+        }
+        else
+        {
+            prog = clCreateProgramWithSource(ctx, 1, &ptr, nullptr, &error);
+        }
+    }
 
     assert(error == CL_SUCCESS);
 
     cl_int build_err = clBuildProgram(prog, 1, &selected_device, "-cl-kernel-arg-info", nullptr, nullptr);
 
     assert(prog);
+
+    {
+        std::cout << "Caching binary\n";
+
+        std::string val;
+        size_t size = 0;
+
+        clGetProgramInfo(prog, CL_PROGRAM_BINARY_SIZES, sizeof(size_t), &size, nullptr);
+
+        val.resize(size);
+
+        const char* ptr = val.data();
+
+        clGetProgramInfo(prog, CL_PROGRAM_BINARIES, sizeof(char*), &ptr, nullptr);
+
+        FILE* file = fopen("binary_cache", "wb");
+
+        fwrite(val.data(), val.size(), 1, file);
+
+        fclose(file);
+    }
 
     std::cout << "hi\n";
 

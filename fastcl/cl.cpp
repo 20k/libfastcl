@@ -6,6 +6,7 @@
 #define CL_USE_DEPRECATED_OPENCL_2_1_APIS
 #define CL_USE_DEPRECATED_OPENCL_2_2_APIS
 
+#include <nlohmann/json.hpp>
 #include <iostream>
 #include "cl.h"
 
@@ -208,6 +209,35 @@ struct kernel_data
             args.push_back(inf);
         }
     }
+
+    void from_json(std::vector<nlohmann::json> js)
+    {
+        args.clear();
+
+        for(auto& i : js)
+        {
+            arg_info inf;
+            inf.qual = i["qual"];
+
+            args.push_back(inf);
+        }
+    }
+
+    nlohmann::json to_json()
+    {
+        std::vector<nlohmann::json> js;
+
+        for(auto& i : args)
+        {
+            nlohmann::json obj;
+            obj["qual"] = i.qual;
+
+            js.push_back(obj);
+        }
+
+
+        return js;
+    }
 };
 
 struct _cl_program : ref_counting
@@ -216,6 +246,86 @@ struct _cl_program : ref_counting
 
     bool built_with_program_info = false;
     bool built_from_source = false;
+
+    std::vector<kernel_data> kernels;
+
+    void kernels_from_json(std::vector<nlohmann::json> data)
+    {
+        kernels.clear();
+
+        for(auto& i : data)
+        {
+            kernel_data kdata;
+            kdata.from_json(i);
+
+            kernels.push_back(kdata);
+        }
+    }
+
+    nlohmann::json kernels_to_json()
+    {
+        std::vector<nlohmann::json> js;
+
+        for(auto& i : kernels)
+        {
+            js.push_back(i.to_json());
+        }
+
+        return js;
+    }
+
+    void set_kernel_data(const std::vector<kernel_data>& in)
+    {
+        kernels = in;
+    }
+
+    std::vector<std::vector<uint8_t>> to_raw_binary()
+    {
+        cl_uint num = 0;
+        clGetProgramInfo_ptr((cl_program)ptr, CL_PROGRAM_NUM_DEVICES, sizeof(cl_uint), &num, nullptr);
+
+        std::vector<std::vector<uint8_t>> data;
+        data.resize(num);
+
+        std::vector<size_t> sizes;
+        sizes.resize(num);
+
+        clGetProgramInfo_ptr((cl_program)ptr, CL_PROGRAM_BINARY_SIZES, sizeof(size_t) * num, sizes.data(), nullptr);
+
+        for(int i=0; i < num; i++)
+        {
+            data[i].resize(sizes[i]);
+        }
+
+        std::vector<unsigned char*> vector_of_pointers;
+
+        for(auto& i : data)
+        {
+            vector_of_pointers.push_back(i.data());
+        }
+
+        clGetProgramInfo_ptr((cl_program)ptr, CL_PROGRAM_BINARIES, sizeof(unsigned char*) * num, vector_of_pointers.data(), nullptr);
+
+        return data;
+    }
+
+    std::vector<std::vector<uint8_t>> to_processed_binary()
+    {
+        std::vector<std::vector<uint8_t>> raw = to_raw_binary();
+
+        std::vector<std::vector<uint8_t>> cb;
+
+        for(auto& i : raw)
+        {
+            nlohmann::json data;
+            data["binary"] = nlohmann::json::binary_t(i);
+            data["kernels"] = kernels_to_json();
+
+            cb.push_back(nlohmann::json::to_cbor(data));
+        }
+
+        return cb;
+    }
 
     std::vector<kernel_data> load_kernel_arg_data()
     {
@@ -376,6 +486,47 @@ cl_program clCreateProgramWithSource(cl_context ctx, cl_uint count, const char**
     return prog;
 }
 
+cl_program clCreateProgramWithBinary(cl_context ctx, cl_uint num_devices, const cl_device_id* device_list, const size_t* lengths, const unsigned char** binaries, cl_int* binary_status, cl_int* errcode_ret)
+{
+    std::vector<std::vector<uint8_t>> raw_binaries;
+    nlohmann::json kernels;
+
+    for(cl_uint i=0; i < num_devices; i++)
+    {
+        std::vector<uint8_t> data(binaries[i], binaries[i] + lengths[i]);
+
+        try
+        {
+            nlohmann::json cb = nlohmann::json::from_cbor(data);
+
+            raw_binaries.push_back(cb["binary"].get_binary());
+
+            ///its the same for all of them
+            kernels = cb["kernels"];
+        }
+        catch(...)
+        {
+            if(binary_status)
+                binary_status[i] = CL_INVALID_BINARY;
+        }
+    }
+
+    std::vector<uint8_t*> ptrs;
+    std::vector<size_t> real_lengths;
+
+    for(auto& i : raw_binaries)
+    {
+        ptrs.push_back(i.data());
+        real_lengths.push_back(i.size());
+    }
+
+    cl_program prog = make_from_native_program(clCreateProgramWithBinary_ptr(ctx, num_devices, device_list, real_lengths.data(), (const unsigned char**)ptrs.data(), binary_status, errcode_ret));
+
+    prog->kernels_from_json(kernels);
+
+    return prog;
+}
+
 cl_int clBuildProgram(cl_program program, cl_uint num_devices, const cl_device_id* device_list, const char* options, void (CL_CALLBACK *  pfn_notify)(cl_program program, void * user_data), void* user_data)
 {
     cl_int ret = call(clBuildProgram_ptr, program, num_devices, device_list, options, pfn_notify, user_data);
@@ -390,14 +541,75 @@ cl_int clBuildProgram(cl_program program, cl_uint num_devices, const cl_device_i
         }
     }
 
-    program->load_kernel_arg_data();
+    if(program->built_from_source && program->built_with_program_info)
+        program->set_kernel_data(program->load_kernel_arg_data());
 
     return ret;
 }
 
 cl_int clGetProgramInfo(cl_program program, cl_program_info param_name, size_t param_value_size, void* param_value, size_t* param_value_size_ret)
 {
-    return clGetProgramInfo_ptr(program, param_name, param_value_size, param_value, param_value_size_ret);
+    if(param_name == CL_PROGRAM_BINARY_SIZES)
+    {
+        auto bin = program->to_processed_binary();
+
+        std::vector<size_t> sizes;
+
+        for(auto& i : bin)
+        {
+            sizes.push_back(i.size());
+        }
+
+        if(param_value_size_ret)
+        {
+            *param_value_size_ret = sizeof(size_t) * bin.size();
+        }
+
+        if(param_value)
+        {
+            size_t count = param_value_size / sizeof(size_t);
+
+            size_t* ptr = (size_t*)param_value;
+
+            for(size_t i=0; i < count && i < sizes.size(); i++)
+            {
+                ptr[i] = sizes.at(i);
+            }
+        }
+
+        return CL_SUCCESS;
+    }
+
+    if(param_name == CL_PROGRAM_BINARIES)
+    {
+        auto bin = program->to_processed_binary();
+
+        if(param_value_size_ret)
+        {
+            *param_value_size_ret = sizeof(char*) * bin.size();
+        }
+
+        if(param_value)
+        {
+            char** pointers = (char**)param_value;
+
+            size_t count = param_value_size / sizeof(char*);
+
+            for(size_t i=0; i < count && i < bin.size(); i++)
+            {
+                char* to_write = pointers[i];
+
+                for(size_t kk=0; kk < bin[i].size(); kk++)
+                {
+                    to_write[kk] = bin[i][kk];
+                }
+            }
+        }
+
+        return CL_SUCCESS;
+    }
+
+    return clGetProgramInfo_ptr(to_native_type(program), param_name, param_value_size, param_value, param_value_size_ret);
 }
 
 #define NAME_TYPE(name, idx) std::remove_cvref_t<decltype(std::get<idx>(detect_args(name##_ptr)))>
