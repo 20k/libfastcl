@@ -50,6 +50,8 @@ auto to_native_type(T&& in)
 template<typename T>
 auto from_native_type(T&& in)
 {
+    static_assert(!std::is_same_v<T, cl_kernel>);
+
     return in;
 }
 
@@ -60,7 +62,7 @@ _cl_kernel* to_native_type(_cl_kernel* in)
     return reinterpret_cast<_cl_kernel*>(in->ptr);
 }
 
-_cl_kernel* from_native_type(_cl_kernel* in)
+_cl_kernel* make_from_native_kernel(_cl_kernel* in)
 {
     _cl_kernel* ptr = new _cl_kernel();
     ptr->ptr = in;
@@ -104,6 +106,7 @@ cl_int clReleaseKernel(cl_kernel kern)
 }
 
 IMPORT(clCreateKernelsInProgram);
+IMPORT(clCreateKernel);
 
 cl_int clCreateKernelsInProgram(cl_program program, cl_uint num_kernels, cl_kernel* kernels, cl_uint* num_kernels_ret)
 {
@@ -113,11 +116,16 @@ cl_int clCreateKernelsInProgram(cl_program program, cl_uint num_kernels, cl_kern
     {
         for(cl_uint i=0; i < num_kernels; i++)
         {
-            kernels[i] = from_native_type(kernels[i]);
+            kernels[i] = make_from_native_kernel(kernels[i]);
         }
     }
 
     return err;
+}
+
+cl_kernel clCreateKernel(cl_program program, const char* kernel_name, cl_int* errcode_ret)
+{
+    return make_from_native_kernel(clCreateKernel_ptr(program, kernel_name, errcode_ret));
 }
 
 #define NAME_TYPE(name, idx) std::remove_cvref_t<decltype(std::get<idx>(detect_args(name##_ptr)))>
@@ -195,9 +203,9 @@ SHIM_4(clSetProgramSpecializationConstant);
 SHIM_1(clUnloadPlatformCompiler);
 SHIM_5(clGetProgramInfo);
 SHIM_6(clGetProgramBuildInfo);
-SHIM_3(clCreateKernel);
+//SHIM_3(clCreateKernel);
 //SHIM_4(clCreateKernelsInProgram);
-SHIM_2(clCloneKernel);
+//SHIM_2(clCloneKernel);
 //SHIM_1(clRetainKernel);
 //SHIM_1(clReleaseKernel);
 SHIM_4(clSetKernelArg);
