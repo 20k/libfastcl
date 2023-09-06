@@ -262,6 +262,7 @@ struct _cl_kernel : ref_counting
 {
     void* ptr = nullptr;
     kernel_data data;
+    bool built_from_source = false;
 };
 
 struct _cl_program : ref_counting
@@ -426,6 +427,7 @@ cl_kernel make_from_native_kernel(cl_program prog, void* in)
     _cl_kernel* ptr = new _cl_kernel();
     ptr->ptr = in;
     ptr->inc();
+    ptr->built_from_source = prog->built_from_source;
 
     if(auto it = prog->kernels.find(native_name); it != prog->kernels.end())
     {
@@ -644,6 +646,41 @@ cl_int clGetProgramInfo(cl_program program, cl_program_info param_name, size_t p
     return clGetProgramInfo_ptr(to_native_type(program), param_name, param_value_size, param_value, param_value_size_ret);
 }
 
+cl_int clGetKernelArgInfo(cl_kernel kernel, cl_uint arg_index, cl_kernel_arg_info param_name, size_t param_value_size, void* param_value, size_t* param_value_size_ret)
+{
+    if(kernel->built_from_source)
+    {
+        return call(clGetKernelArgInfo_ptr, kernel, arg_index, param_name, param_value_size, param_value, param_value_size_ret);
+    }
+    else
+    {
+        if(param_name == CL_KERNEL_ARG_TYPE_QUALIFIER)
+        {
+            if(param_value_size_ret)
+                *param_value_size_ret = sizeof(cl_kernel_arg_type_qualifier);
+
+            if(param_value)
+            {
+                if(param_value_size != sizeof(cl_kernel_arg_type_qualifier))
+                    return CL_INVALID_VALUE;
+
+                if(arg_index < kernel->data.args.size())
+                {
+                    *(size_t*)param_value = kernel->data.args[arg_index].qual;
+                }
+                else
+                {
+                    return CL_INVALID_ARG_INDEX;
+                }
+            }
+
+            return CL_SUCCESS;
+        }
+    }
+
+    return CL_KERNEL_ARG_INFO_NOT_AVAILABLE;
+}
+
 #define NAME_TYPE(name, idx) std::remove_cvref_t<decltype(std::get<idx>(detect_args(name##_ptr)))>
 #define NAME_RETURN(name) std::remove_cvref_t<decltype(detect_return(name##_ptr))>
 
@@ -728,7 +765,7 @@ SHIM_4(clSetKernelArg);
 SHIM_3(clSetKernelArgSVMPointer);
 SHIM_4(clSetKernelExecInfo);
 SHIM_5(clGetKernelInfo);
-SHIM_6(clGetKernelArgInfo);
+//SHIM_6(clGetKernelArgInfo);
 SHIM_6(clGetKernelWorkGroupInfo);
 SHIM_8(clGetKernelSubGroupInfo);
 SHIM_2(clWaitForEvents);
