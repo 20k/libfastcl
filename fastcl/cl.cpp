@@ -53,11 +53,6 @@ struct ref_counting
     }
 };
 
-struct _cl_kernel : ref_counting
-{
-    void* ptr = nullptr;
-};
-
 #define IMPORT(name) inline auto name##_ptr = get_ptr<decltype(name)>(#name);
 
 IMPORT(clGetPlatformIDs);
@@ -190,9 +185,23 @@ struct arg_info
     cl_kernel_arg_type_qualifier qual = 0;
 };
 
+std::string get_native_kernel_name(cl_kernel kern)
+{
+    size_t length;
+    clGetKernelInfo_ptr(kern, CL_KERNEL_FUNCTION_NAME, 0, nullptr, &length);
+
+    std::string str;
+    str.resize(length);
+
+    clGetKernelInfo_ptr(kern, CL_KERNEL_FUNCTION_NAME, length, str.data(), nullptr);
+
+    return str;
+}
+
 struct kernel_data
 {
     std::vector<arg_info> args;
+    std::string name;
 
     void load_from_kernel(cl_kernel kern)
     {
@@ -208,13 +217,19 @@ struct kernel_data
 
             args.push_back(inf);
         }
+
+        name = get_native_kernel_name(kern);
     }
 
-    void from_json(std::vector<nlohmann::json> js)
+    void from_json(nlohmann::json js)
     {
         args.clear();
 
-        for(auto& i : js)
+        name = js["name"];
+
+        std::vector<nlohmann::json> args_js = js["args"];
+
+        for(auto& i : args_js)
         {
             arg_info inf;
             inf.qual = i["qual"];
@@ -235,9 +250,18 @@ struct kernel_data
             js.push_back(obj);
         }
 
+        nlohmann::json out;
+        out["args"] = js;
+        out["name"] = name;
 
-        return js;
+        return out;
     }
+};
+
+struct _cl_kernel : ref_counting
+{
+    void* ptr = nullptr;
+    kernel_data data;
 };
 
 struct _cl_program : ref_counting
@@ -247,34 +271,34 @@ struct _cl_program : ref_counting
     bool built_with_program_info = false;
     bool built_from_source = false;
 
-    std::vector<kernel_data> kernels;
+    std::map<std::string, kernel_data> kernels;
 
-    void kernels_from_json(std::vector<nlohmann::json> data)
+    void kernels_from_json(std::map<std::string, nlohmann::json> data)
     {
         kernels.clear();
 
         for(auto& i : data)
         {
             kernel_data kdata;
-            kdata.from_json(i);
+            kdata.from_json(i.second);
 
-            kernels.push_back(kdata);
+            kernels[kdata.name] = kdata;
         }
     }
 
     nlohmann::json kernels_to_json()
     {
-        std::vector<nlohmann::json> js;
+        std::map<std::string, nlohmann::json> js;
 
         for(auto& i : kernels)
         {
-            js.push_back(i.to_json());
+            js[i.first] = i.second.to_json();
         }
 
         return js;
     }
 
-    void set_kernel_data(const std::vector<kernel_data>& in)
+    void set_kernel_data(const std::map<std::string, kernel_data>& in)
     {
         kernels = in;
     }
@@ -327,9 +351,9 @@ struct _cl_program : ref_counting
         return cb;
     }
 
-    std::vector<kernel_data> load_kernel_arg_data()
+    std::map<std::string, kernel_data> load_kernel_arg_data()
     {
-        std::vector<kernel_data> kernels;
+        std::map<std::string, kernel_data> kernels;
 
         cl_uint kernel_count = 0;
 
@@ -349,7 +373,7 @@ struct _cl_program : ref_counting
             kernel_data dat;
             dat.load_from_kernel(i);
 
-            kernels.push_back(dat);
+            kernels[dat.name] = dat;
 
             clReleaseKernel_ptr(i);
         }
@@ -395,11 +419,19 @@ auto call(Func f, T&&... args)
         return from_native_type(f(to_native_type(args)...));
 }
 
-cl_kernel make_from_native_kernel(void* in)
+cl_kernel make_from_native_kernel(cl_program prog, void* in)
 {
+    std::string native_name = get_native_kernel_name((cl_kernel)in);
+
     _cl_kernel* ptr = new _cl_kernel();
     ptr->ptr = in;
     ptr->inc();
+
+    if(auto it = prog->kernels.find(native_name); it != prog->kernels.end())
+    {
+        ptr->data = it->second;
+    }
+
     return ptr;
 }
 
@@ -442,7 +474,7 @@ cl_int clCreateKernelsInProgram(cl_program program, cl_uint num_kernels, cl_kern
     {
         for(cl_uint i=0; i < num_kernels; i++)
         {
-            kernels[i] = make_from_native_kernel(kernels[i]);
+            kernels[i] = make_from_native_kernel(program, kernels[i]);
         }
     }
 
@@ -451,7 +483,7 @@ cl_int clCreateKernelsInProgram(cl_program program, cl_uint num_kernels, cl_kern
 
 cl_kernel clCreateKernel(cl_program program, const char* kernel_name, cl_int* errcode_ret)
 {
-    return make_from_native_kernel(clCreateKernel_ptr(to_native_type(program), kernel_name, errcode_ret));
+    return make_from_native_kernel(program, clCreateKernel_ptr(to_native_type(program), kernel_name, errcode_ret));
 }
 
 cl_int clRetainProgram(cl_program program)

@@ -96,6 +96,7 @@ std::string read_impl(const std::string& file)
 ///detect kernels with unset arguments
 ///improve performance
 ///detect use after free
+///automatic binary caching
 
 int main()
 {
