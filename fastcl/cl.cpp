@@ -495,6 +495,18 @@ cl_int clEnqueueReadBufferEx(cl_command_queue command_queue, cl_mem buffer, cl_b
     }, buffer, native_events, event);
 }
 
+cl_int clEnqueueWriteBufferEx(cl_command_queue command_queue, cl_mem buffer, cl_bool blocking_write, size_t offset, size_t size, const void* ptr, cl_uint num_events_in_wait_list, const cl_event* event_wait_list, cl_event* event)
+{
+    pseudo_queue* pqueue = reinterpret_cast<pseudo_queue*>(command_queue);
+
+    auto native_events = make_events(num_events_in_wait_list, event_wait_list);
+
+    return add_single(*pqueue, [&](cl_command_queue native_queue, const std::vector<cl_event>& evts, cl_event& out)
+    {
+        return clEnqueueWriteBuffer(native_queue, buffer, blocking_write, offset, size, ptr, evts.size(), evts.data(), &out);
+    }, buffer, native_events, event);
+}
+
 cl_command_queue clCreateCommandQueueWithPropertiesEx(cl_context ctx, cl_device_id device, const cl_queue_properties* properties, cl_int* errcode_ret)
 {
     pseudo_queue* pqueue = new pseudo_queue;
