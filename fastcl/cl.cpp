@@ -9,6 +9,8 @@
 #include <nlohmann/json.hpp>
 #include <iostream>
 #include "cl.h"
+#include <boost/smart_ptr/intrusive_ptr.hpp>
+#include <boost/smart_ptr/intrusive_ref_counter.hpp>
 
 template<typename T>
 auto to_native_type(T&& in)
@@ -37,6 +39,40 @@ auto& get_ptr(const char* name)
     return api.lib.get<T>(name);
 }
 
+#if 0
+///each copy of this is unique. We don't copy these, we take pointers
+///that renders the entire ref counting mechanism basically useless, right?
+template<typename T>
+struct ref_counted
+{
+    std::atomic_uint cnt{0};
+    boost::intrusive_ptr<T> ptr;
+
+    /*explicit ref_counted(T* in) : ptr(in, false)
+    {
+    }*/
+
+    ///ptr == nullptr after this
+    T* release_native()
+    {
+        return ptr.detach();
+    }
+
+    friend void intrusive_ptr_add_ref(ref_counted<T>* in)
+    {
+        in->cnt++;
+    }
+
+    friend void intrusive_ptr_release(ref_counted<T>* in)
+    {
+        if((--in->cnt) == 0)
+        {
+            std::cout << "Delete\n";
+            delete in;
+        }
+    }
+};
+#endif
 
 struct ref_counting
 {
@@ -166,6 +202,79 @@ IMPORT(clUnloadCompiler);
 IMPORT(clCreateCommandQueue);
 IMPORT(clCreateSampler);
 IMPORT(clEnqueueTask);
+
+struct pseudo_queue
+{
+    bool raw_queue = false;
+    cl_command_queue accessory;
+    std::vector<cl_command_queue> queues;
+
+    void make_raw(cl_context ctx, cl_device_id device, const std::vector<cl_queue_properties>& properties, cl_int* errcode_ret)
+    {
+        assert(false);
+    }
+
+    void make_managed(cl_context ctx, cl_device_id device, const std::vector<cl_queue_properties>& properties, cl_int* errcode_ret)
+    {
+        cl_command_queue_properties props[] = {CL_QUEUE_PROPERTIES, CL_QUEUE_OUT_OF_ORDER_EXEC_MODE_ENABLE, 0};
+
+        accessory = clCreateCommandQueueWithProperties_ptr(ctx, device, props, errcode_ret);
+
+        assert(*errcode_ret == CL_SUCCESS);
+
+        int max_queues = 16;
+
+        for(int i=0; i < max_queues; i++)
+        {
+            queues.push_back(clCreateCommandQueueWithProperties_ptr(ctx, device, props, errcode_ret));
+
+            assert(*errcode_ret == CL_SUCCESS);
+        }
+    }
+};
+
+///all *enqueue* commands, all flush and finish commands
+///clgetcommandqueueinfo
+
+cl_command_queue clCreateCommandQueueWithPropertiesEx(cl_context ctx, cl_device_id device, const cl_queue_properties* properties, cl_int* errcode_ret)
+{
+    pseudo_queue* pqueue = new pseudo_queue;
+
+    std::vector<cl_queue_properties> props;
+
+    for(int i=0;; i++)
+    {
+        props.push_back(properties[i]);
+
+        if(properties[i] == 0)
+            break;
+    }
+
+    bool is_raw = false;
+
+    for(int i=0; i < (int)props.size(); i++)
+    {
+        if(props[i] == CL_QUEUE_PROPERTIES)
+        {
+            if(props[i + 1] & CL_QUEUE_ON_DEVICE)
+                is_raw = true;
+        }
+    }
+
+    if(is_raw)
+        pqueue->make_raw(ctx, device, props, errcode_ret);
+    else
+        pqueue->make_managed(ctx, device, props, errcode_ret);
+
+    return reinterpret_cast<cl_command_queue>(pqueue);
+}
+
+cl_command_queue clCreateCommandQueueEx(cl_context ctx, cl_device_id device, cl_command_queue_properties props, cl_int* errcode_ret)
+{
+    cl_queue_properties compat_props[] = {CL_QUEUE_PROPERTIES, props, 0};
+
+    return clCreateCommandQueueWithPropertiesEx(ctx, device, compat_props, errcode_ret);
+}
 
 ///ok program flow:
 ///make program from source
