@@ -203,11 +203,133 @@ IMPORT(clCreateCommandQueue);
 IMPORT(clCreateSampler);
 IMPORT(clEnqueueTask);
 
+cl_mem_flags get_flags(cl_mem in)
+{
+    cl_mem_flags ret = 0;
+    clGetMemObjectInfo(in, CL_MEM_FLAGS, sizeof(cl_mem_flags), &ret, nullptr);
+
+    return ret;
+}
+
+///does not retain
+std::optional<cl_mem> get_parent(cl_mem in)
+{
+    cl_mem ret;
+    ///unclear what this does to the reference count
+    clGetMemObjectInfo(in, CL_MEM_ASSOCIATED_MEMOBJECT, sizeof(cl_mem), &ret, nullptr);
+
+    if(ret == nullptr)
+        return std::nullopt;
+
+    return ret;
+}
+
+///does not retain
+std::pair<cl_mem, cl_mem_flags> get_barrier_vars(cl_mem in)
+{
+    assert(in);
+
+    std::optional<cl_mem> parent = get_parent(in);
+
+    while(parent.has_value())
+    {
+        auto next_parent_opt = get_parent(parent.value());
+
+        if(next_parent_opt.has_value())
+            parent = next_parent_opt;
+        else
+            break;
+    }
+
+    cl_mem_flags flags = get_flags(in);
+
+    cl_mem val = parent.value_or(in);
+
+    return {val, flags};
+}
+
+struct access_storage
+{
+    std::map<cl_mem, std::vector<cl_mem_flags>> store;
+
+    void add(cl_mem in)
+    {
+        assert(in);
+
+        auto vars = get_barrier_vars(in);
+
+        clRetainMemObject(in);
+
+        store[vars.first].push_back(vars.second);
+    }
+
+    void remove(cl_mem in)
+    {
+        auto it = store.find(in);
+
+        if(it == store.end())
+            return;
+
+        clReleaseMemObject(in);
+        store.erase(it);
+    }
+
+    void remove_all()
+    {
+        for(auto& i : store)
+        {
+            clReleaseMemObject(i.first);
+        }
+
+        store.clear();
+    }
+};
+
+namespace
+{
+bool requires_memory_barrier_raw(cl_mem_flags flag1, cl_mem_flags flag2)
+{
+    ///do not need a memory barrier between two overlapping objects if and only if they're both read only
+    if((flag1 & CL_MEM_READ_ONLY) && (flag2 & CL_MEM_READ_ONLY))
+        return false;
+
+    //if((flag1 & CL_MEM_WRITE_ONLY) && (flag2 & CL_MEM_WRITE_ONLY))
+    //    return false;
+
+    return true;
+}
+
+bool requires_memory_barrier(const access_storage& base, const access_storage& theirs)
+{
+    for(auto& [mem, flags] : theirs.store)
+    {
+        auto it = base.store.find(mem);
+
+        if(it == base.store.end())
+            continue;
+
+        for(cl_mem_flags f : it->second)
+        {
+            for(cl_mem_flags g : flags)
+            {
+                if(requires_memory_barrier_raw(f, g))
+                    return true;
+            }
+        }
+    }
+
+    return false;
+}
+}
+
 struct pseudo_queue
 {
     bool raw_queue = false;
     cl_command_queue accessory;
     std::vector<cl_command_queue> queues;
+    int which_queue = 0;
+
+    std::vector<std::tuple<cl_event, access_storage, std::string>> event_history;
 
     void make_raw(cl_context ctx, cl_device_id device, const std::vector<cl_queue_properties>& properties, cl_int* errcode_ret)
     {
@@ -231,10 +353,147 @@ struct pseudo_queue
             assert(*errcode_ret == CL_SUCCESS);
         }
     }
+
+    cl_command_queue next()
+    {
+        cl_command_queue q = queues[which_queue];
+        which_queue++;
+        which_queue %= queues.size();
+        return q;
+    }
 };
+
+namespace
+{
+std::vector<cl_event> get_implicit_dependencies(pseudo_queue& pqueue, const access_storage& store)
+{
+    std::vector<cl_event> deps;
+
+    for(const auto& [evt, args, tag] : pqueue.event_history)
+    {
+        if(requires_memory_barrier(store, args))
+        {
+            deps.push_back(evt);
+        }
+    }
+
+    return deps;
+}
+
+std::vector<cl_event> get_implicit_dependencies(pseudo_queue& pqueue, cl_mem obj)
+{
+    access_storage store;
+    store.add(obj);
+
+    auto deps = get_implicit_dependencies(pqueue, store);
+
+    store.remove_all();
+
+    return deps;
+}
+}
+
+/*
+template<typename T>
+cl::event add(const T& func, cl::mem_object& obj, const std::vector<cl::event>& events)
+{
+    cleanup_events();
+
+    std::vector<cl::event> evts = get_dependencies(obj);
+
+    evts.insert(evts.end(), events.begin(), events.end());
+
+    cl::command_queue& exec_on = mqueue.next();
+
+    cl::event next = func(exec_on, evts);
+
+    cl::access_storage store;
+    store.add(obj);
+
+    event_history.push_back({next, store, "generic"});
+
+    return next;
+}*/
 
 ///all *enqueue* commands, all flush and finish commands
 ///clgetcommandqueueinfo
+
+///cleanup_events
+/*for(int i=0; i < (int)event_history.size(); i++)
+{
+    cl::event& test = std::get<0>(event_history[i]);
+
+    if(test.is_finished())
+    {
+        event_history.erase(event_history.begin() + i);
+        i--;
+        continue;
+    }
+}*/
+
+void cleanup_events(pseudo_queue& pqueue)
+{
+
+}
+
+template<typename T>
+auto add_single(pseudo_queue& pqueue, T&& func, cl_mem obj, const std::vector<cl_event>& events, cl_event* external_event)
+{
+    cleanup_events(pqueue);
+
+    std::vector<cl_event> evts = get_implicit_dependencies(pqueue, obj);
+
+    evts.insert(evts.end(), events.begin(), events.end());
+
+    cl_command_queue exec_on = pqueue.next();
+
+    cl_event next = nullptr;
+
+    auto result = func(exec_on, evts, next);
+
+    assert(next);
+
+    access_storage store;
+    store.add(obj);
+
+    clRetainEvent(next);
+    pqueue.event_history.push_back({next, store, "generic"});
+
+    if(external_event)
+        *external_event = next;
+
+    return result;
+}
+
+std::vector<cl_event> make_events(cl_int num, const cl_event* event)
+{
+    if(num == 0)
+        return {};
+
+    if(event == nullptr)
+        return {};
+
+    std::vector<cl_event> ret;
+
+    for(int i=0; i < num; i++)
+    {
+        ret.push_back(event[i]);
+    }
+
+    return ret;
+}
+
+cl_int clEnqueueReadBufferEx(cl_command_queue command_queue, cl_mem buffer, cl_bool blocking_read, size_t offset, size_t size, void* ptr, cl_int num_events_in_wait_list, const cl_event* event_wait_list, cl_event* event)
+{
+    pseudo_queue* pqueue = reinterpret_cast<pseudo_queue*>(command_queue);
+
+    auto native_events = make_events(num_events_in_wait_list, event_wait_list);
+
+    return add_single(*pqueue, [&](cl_command_queue native_queue, const std::vector<cl_event>& evts, cl_event& out)
+    {
+        return clEnqueueReadBuffer(native_queue, buffer, blocking_read, offset, size, ptr, evts.size(), evts.data(), &out);
+    }, buffer, native_events, event);
+}
 
 cl_command_queue clCreateCommandQueueWithPropertiesEx(cl_context ctx, cl_device_id device, const cl_queue_properties* properties, cl_int* errcode_ret)
 {
