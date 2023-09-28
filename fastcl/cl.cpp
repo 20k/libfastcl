@@ -347,12 +347,15 @@ struct _cl_command_queue
 
     void make_raw(cl_context ctx, cl_device_id device, const std::vector<cl_queue_properties>& properties, cl_int* errcode_ret)
     {
-        assert(false);
+        auto props = properties;
+        props.push_back(0);
+
+        accessory = clCreateCommandQueueWithProperties(ctx, device, properties.data(), errcode_ret);
     }
 
     void make_managed(cl_context ctx, cl_device_id device, const std::vector<cl_queue_properties>& properties, cl_int* errcode_ret)
     {
-        cl_command_queue_properties props[] = {CL_QUEUE_PROPERTIES, CL_QUEUE_OUT_OF_ORDER_EXEC_MODE_ENABLE, 0};
+        cl_command_queue_properties props[] = {CL_QUEUE_PROPERTIES, 0, 0};
 
         accessory = clCreateCommandQueueWithProperties_ptr(ctx, device, props, errcode_ret);
 
@@ -536,8 +539,6 @@ cl_int clEnqueueWriteBufferEx(cl_command_queue pqueue, cl_mem buffer, cl_bool bl
 
 cl_command_queue clCreateCommandQueueWithPropertiesEx(cl_context ctx, cl_device_id device, const cl_queue_properties* properties, cl_int* errcode_ret)
 {
-    printf("Hi there\n");
-
     _cl_command_queue* pqueue = new _cl_command_queue;
 
     std::vector<cl_queue_properties> props;
@@ -550,14 +551,14 @@ cl_command_queue clCreateCommandQueueWithPropertiesEx(cl_context ctx, cl_device_
         props.push_back(properties[i]);
     }
 
-    bool is_raw = false;
+    bool is_raw = true;
 
     for(int i=0; i < (int)props.size(); i++)
     {
         if(props[i] == CL_QUEUE_PROPERTIES)
         {
-            if(props[i + 1] & CL_QUEUE_ON_DEVICE)
-                is_raw = true;
+            if(props[i + 1] & CL_QUEUE_MULTITHREADED)
+                is_raw = false;
         }
     }
 
@@ -576,8 +577,6 @@ cl_command_queue clCreateCommandQueueWithPropertiesEx(cl_context ctx, cl_device_
 
 cl_command_queue clCreateCommandQueueEx(cl_context ctx, cl_device_id device, cl_command_queue_properties props, cl_int* errcode_ret)
 {
-    printf("Hi there\n");
-
     cl_queue_properties compat_props[] = {CL_QUEUE_PROPERTIES, props, 0};
 
     return clCreateCommandQueueWithPropertiesEx(ctx, device, compat_props, errcode_ret);

@@ -119,7 +119,7 @@ int main()
     cl_int error;
     cl_context ctx = clCreateContext(props, 1, &selected_device, nullptr, nullptr, &error);
 
-    cl_command_queue cqueue = clCreateCommandQueueEx(ctx, selected_device, 0, nullptr);
+    cl_command_queue cqueue = clCreateCommandQueueEx(ctx, selected_device, CL_QUEUE_MULTITHREADED, nullptr);
 
     printf("Post create\n");
 
