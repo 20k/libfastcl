@@ -621,6 +621,42 @@ cl_int clEnqueueFillBuffer(cl_command_queue pqueue, cl_mem buffer, const void* p
     }, buffer, native_events, event);
 }
 
+cl_int clEnqueueAcquireGLObjects(cl_command_queue pqueue, cl_uint num_objects, const cl_mem* mem_objects, cl_uint num_events_in_wait_list, const cl_event* event_wait_list, cl_event* event)
+{
+    auto native_events = make_events(num_events_in_wait_list, event_wait_list);
+
+    for(int i=0; i < (int)num_objects; i++)
+    {
+        cl_int cret = add_single(*pqueue, [&](cl_command_queue native_queue, const std::vector<cl_event>& evts, cl_event& out)
+        {
+            return clEnqueueAcquireGLObjects_ptr(native_queue, 1, &mem_objects[i], evts.size(), evts.data(), &out);
+        }, mem_objects[i], native_events, event);
+
+        if(cret != CL_SUCCESS)
+            return cret;
+    }
+
+    return CL_SUCCESS;
+}
+
+cl_int clEnqueueReleaseGLObjects(cl_command_queue pqueue, cl_uint num_objects, const cl_mem* mem_objects, cl_uint num_events_in_wait_list, const cl_event* event_wait_list, cl_event* event)
+{
+    auto native_events = make_events(num_events_in_wait_list, event_wait_list);
+
+    for(int i=0; i < (int)num_objects; i++)
+    {
+        cl_int cret = add_single(*pqueue, [&](cl_command_queue native_queue, const std::vector<cl_event>& evts, cl_event& out)
+        {
+            return clEnqueueReleaseGLObjects_ptr(native_queue, 1, &mem_objects[i], evts.size(), evts.data(), &out);
+        }, mem_objects[i], native_events, event);
+
+        if(cret != CL_SUCCESS)
+            return cret;
+    }
+
+    return CL_SUCCESS;
+}
+
 cl_command_queue clCreateCommandQueueWithProperties(cl_context ctx, cl_device_id device, const cl_queue_properties* properties, cl_int* errcode_ret)
 {
     _cl_command_queue* pqueue = new _cl_command_queue;
@@ -1551,5 +1587,5 @@ SHIM_5(clCreateSampler);
 SHIM_5(clEnqueueTask);
 
 SHIM_6(clCreateFromGLTexture);
-SHIM_6(clEnqueueAcquireGLObjects);
-SHIM_6(clEnqueueReleaseGLObjects);
+//SHIM_6(clEnqueueAcquireGLObjects);
+//SHIM_6(clEnqueueReleaseGLObjects);
