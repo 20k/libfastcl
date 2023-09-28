@@ -1053,6 +1053,8 @@ cl_int clFlush(cl_command_queue command_queue)
         clFlush_ptr(i);
     }
 
+    cleanup_events(*command_queue);
+
     return CL_SUCCESS;
 }
 
@@ -1066,7 +1068,17 @@ cl_int clFinish(cl_command_queue command_queue)
         clFinish_ptr(i);
     }
 
+    cleanup_events(*command_queue);
+
     return CL_SUCCESS;
+}
+
+cl_int clGetCommandQueueInfo(cl_command_queue command_queue, cl_command_queue_info param_name, size_t param_value_size, void* param_value, size_t* param_value_size_ret)
+{
+    if(!command_queue->is_managed_queue)
+        return clGetCommandQueueInfo_ptr(command_queue->accessory, param_name, param_value_size, param_value, param_value_size_ret);
+
+    return clGetCommandQueueInfo_ptr(command_queue->queues[0], param_name, param_value_size, param_value, param_value_size_ret);
 }
 
 cl_int clRetainKernel(cl_kernel kern)
@@ -1347,7 +1359,7 @@ SHIM_3(clSetContextDestructorCallback);
 //SHIM_4(clCreateCommandQueueWithProperties);
 //SHIM_1(clRetainCommandQueue);
 //SHIM_1(clReleaseCommandQueue);
-SHIM_5(clGetCommandQueueInfo);
+//SHIM_5(clGetCommandQueueInfo);
 SHIM_5(clCreateBuffer);
 SHIM_5(clCreateSubBuffer);
 SHIM_6(clCreateImage);
