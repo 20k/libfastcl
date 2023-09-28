@@ -223,7 +223,7 @@ bool is_event_finished(cl_event evt)
 
     cl_int status = 0;
 
-    if(clGetEventInfo(evt, CL_EVENT_COMMAND_EXECUTION_STATUS, sizeof(cl_int), (void*)&status, nullptr) != CL_SUCCESS)
+    if(clGetEventInfo_ptr(evt, CL_EVENT_COMMAND_EXECUTION_STATUS, sizeof(cl_int), (void*)&status, nullptr) != CL_SUCCESS)
         assert(false);
 
     return status == CL_COMPLETE;
@@ -232,7 +232,7 @@ bool is_event_finished(cl_event evt)
 cl_mem_flags get_flags(cl_mem in)
 {
     cl_mem_flags ret = 0;
-    clGetMemObjectInfo(in, CL_MEM_FLAGS, sizeof(cl_mem_flags), &ret, nullptr);
+    clGetMemObjectInfo_ptr(in, CL_MEM_FLAGS, sizeof(cl_mem_flags), &ret, nullptr);
 
     return ret;
 }
@@ -285,7 +285,7 @@ struct access_storage
 
         auto vars = get_barrier_vars(in);
 
-        clRetainMemObject(in);
+        clRetainMemObject_ptr(in);
 
         store[vars.first].push_back(vars.second);
     }
@@ -297,7 +297,7 @@ struct access_storage
         if(it == store.end())
             return;
 
-        clReleaseMemObject(in);
+        clReleaseMemObject_ptr(in);
         store.erase(it);
     }
 
@@ -305,7 +305,7 @@ struct access_storage
     {
         for(auto& i : store)
         {
-            clReleaseMemObject(i.first);
+            clReleaseMemObject_ptr(i.first);
         }
 
         store.clear();
@@ -426,7 +426,7 @@ _cl_command_queue* to_native_type(_cl_command_queue* in)
         ///enqueue a marker on the 0th queue that synchronises all other queues, so that we can dump work into the 0th queue again
         ///this assumes an in order queue
         cl_event evt = nullptr;
-        clEnqueueMarkerWithWaitList(in->queues[0], all_events.size(), all_events.data(), &evt);
+        clEnqueueMarkerWithWaitList_ptr(in->queues[0], all_events.size(), all_events.data(), &evt);
 
         assert(evt);
 
@@ -538,7 +538,7 @@ auto add_single(_cl_command_queue& pqueue, T&& func, cl_mem obj, const std::vect
         if(external_event)
             *external_event = evt;
         else
-            clReleaseEvent(evt);
+            clReleaseEvent_ptr(evt);
 
         return result;
     }
@@ -560,7 +560,7 @@ auto add_single(_cl_command_queue& pqueue, T&& func, cl_mem obj, const std::vect
     access_storage store;
     store.add(obj);
 
-    clRetainEvent(next);
+    clRetainEvent_ptr(next);
     pqueue.event_history.push_back({next, store, "generic"});
 
     if(external_event)
@@ -995,38 +995,42 @@ cl_program make_from_native_program(void* in)
 void clBeginSpliceEx(cl_command_queue real_queue, cl_command_queue c_pqueue)
 {
     assert(!real_queue->is_managed_queue);
+    assert(c_pqueue->is_managed_queue);
+
+    assert(real_queue->accessory);
 
     cl_event evt = nullptr;
-    clEnqueueMarkerWithWaitList(real_queue->accessory, 0, nullptr, &evt);
+    clEnqueueMarkerWithWaitList_ptr(real_queue->accessory, 0, nullptr, &evt);
 
     for(cl_command_queue q : c_pqueue->queues)
     {
-        clEnqueueMarkerWithWaitList(q, 1, &evt, nullptr);
+        clEnqueueMarkerWithWaitList_ptr(q, 1, &evt, nullptr);
     }
 
-    clReleaseEvent(evt);
+    clReleaseEvent_ptr(evt);
 }
 
 void clEndSpliceEx(cl_command_queue real_queue, cl_command_queue c_pqueue)
 {
     assert(!real_queue->is_managed_queue);
+    assert(c_pqueue->is_managed_queue);
 
     std::vector<cl_event> evts;
 
     for(cl_command_queue q : c_pqueue->queues)
     {
-        cl_event evt;
+        cl_event evt = nullptr;
 
-        clEnqueueMarkerWithWaitList(q, 0, nullptr, &evt);
+        clEnqueueMarkerWithWaitList_ptr(q, 0, nullptr, &evt);
 
         evts.push_back(evt);
     }
 
-    clEnqueueMarkerWithWaitList(real_queue->accessory, evts.size(), evts.data(), nullptr);
+    clEnqueueMarkerWithWaitList_ptr(real_queue->accessory, evts.size(), evts.data(), nullptr);
 
     for(cl_event e : evts)
     {
-        clReleaseEvent(e);
+        clReleaseEvent_ptr(e);
     }
 }
 
