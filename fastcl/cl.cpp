@@ -203,6 +203,19 @@ IMPORT(clCreateCommandQueue);
 IMPORT(clCreateSampler);
 IMPORT(clEnqueueTask);
 
+bool is_event_finished(cl_event evt)
+{
+    if(evt == nullptr)
+        return true;
+
+    cl_int status = 0;
+
+    if(clGetEventInfo(evt, CL_EVENT_COMMAND_EXECUTION_STATUS, sizeof(cl_int), (void*)&status, nullptr) != CL_SUCCESS)
+        assert(false);
+
+    return status == CL_COMPLETE;
+}
+
 cl_mem_flags get_flags(cl_mem in)
 {
     cl_mem_flags ret = 0;
@@ -433,7 +446,22 @@ cl::event add(const T& func, cl::mem_object& obj, const std::vector<cl::event>& 
 
 void cleanup_events(pseudo_queue& pqueue)
 {
+    for(int i=0; i < (int)pqueue.event_history.size(); i++)
+    {
+        cl_event& test = std::get<0>(pqueue.event_history[i]);
 
+        if(is_event_finished(test))
+        {
+            auto [found_event, found_store, unused] = pqueue.event_history[i];
+
+            clReleaseEvent_ptr(found_event);
+            found_store.remove_all();
+
+            pqueue.event_history.erase(pqueue.event_history.begin() + i);
+            i--;
+            continue;
+        }
+    }
 }
 
 template<typename T>
