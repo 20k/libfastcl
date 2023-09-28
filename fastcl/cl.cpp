@@ -459,10 +459,10 @@ std::vector<cl_event> get_implicit_dependencies(_cl_command_queue& pqueue, const
     return deps;
 }
 
-std::vector<cl_event> get_implicit_dependencies(_cl_command_queue& pqueue, cl_mem obj)
+std::vector<cl_event> get_implicit_dependencies(_cl_command_queue& pqueue, cl_mem obj, bool read_only)
 {
     access_storage store;
-    store.add(false, obj);
+    store.add(read_only, obj);
 
     auto deps = get_implicit_dependencies(pqueue, store);
 
@@ -548,7 +548,7 @@ auto add_single(_cl_command_queue& pqueue, T&& func, cl_mem obj, const std::vect
 
     cleanup_events(pqueue);
 
-    std::vector<cl_event> evts = get_implicit_dependencies(pqueue, obj);
+    std::vector<cl_event> evts = get_implicit_dependencies(pqueue, obj, read_only);
 
     evts.insert(evts.end(), events.begin(), events.end());
 
