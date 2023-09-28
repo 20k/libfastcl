@@ -569,6 +569,8 @@ auto add_single(_cl_command_queue& pqueue, T&& func, cl_mem obj, const std::vect
 
     if(external_event)
         *external_event = next;
+    else
+        clReleaseEvent_ptr(next);
 
     return result;
 }
@@ -1138,9 +1140,9 @@ cl_int clEnqueueNDRangeKernel(cl_command_queue command_queue, cl_kernel kernel, 
     command_queue->event_history.push_back({evt, store, "kernel"});
 
     if(event)
-    {
         *event = evt;
-    }
+    else
+        clReleaseEvent_ptr(evt);
 
     return ret;
 }
