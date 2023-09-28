@@ -531,7 +531,7 @@ void cleanup_events(_cl_command_queue& pqueue)
 }
 
 template<typename T>
-auto add_single(_cl_command_queue& pqueue, T&& func, cl_mem obj, const std::vector<cl_event>& events, cl_event* external_event)
+auto add_single(_cl_command_queue& pqueue, T&& func, cl_mem obj, const std::vector<cl_event>& events, cl_event* external_event, bool read_only = false)
 {
     if(!pqueue.is_managed_queue)
     {
@@ -562,7 +562,7 @@ auto add_single(_cl_command_queue& pqueue, T&& func, cl_mem obj, const std::vect
     assert(next);
 
     access_storage store;
-    store.add(false, obj);
+    store.add(read_only, obj);
 
     clRetainEvent_ptr(next);
     pqueue.event_history.push_back({next, store, "generic"});
@@ -598,7 +598,7 @@ cl_int clEnqueueReadBuffer(cl_command_queue pqueue, cl_mem buffer, cl_bool block
     return add_single(*pqueue, [&](cl_command_queue native_queue, const std::vector<cl_event>& evts, cl_event& out)
     {
         return clEnqueueReadBuffer_ptr(native_queue, buffer, blocking_read, offset, size, ptr, evts.size(), evts.data(), &out);
-    }, buffer, native_events, event);
+    }, buffer, native_events, event, true);
 }
 
 cl_int clEnqueueWriteBuffer(cl_command_queue pqueue, cl_mem buffer, cl_bool blocking_write, size_t offset, size_t size, const void* ptr, cl_uint num_events_in_wait_list, const cl_event* event_wait_list, cl_event* event)
