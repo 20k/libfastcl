@@ -12,7 +12,6 @@
 #define CL_QUEUE_MULTITHREADED (1 << 9)
 
 #include <nlohmann/json.hpp>
-#include <iostream>
 #include <boost/smart_ptr/intrusive_ptr.hpp>
 #include <boost/smart_ptr/intrusive_ref_counter.hpp>
 
@@ -1149,6 +1148,9 @@ cl_int clEnqueueNDRangeKernel(cl_command_queue command_queue, cl_kernel kernel, 
 
 cl_int clSetKernelArgMemEx(cl_kernel kern, cl_uint arg_index, size_t arg_size, const void* arg_value)
 {
+    if(arg_value == nullptr)
+        return clSetKernelArg(kern, arg_index, arg_size, arg_value);
+
     bool read_only = false;
 
     {
@@ -1159,7 +1161,12 @@ cl_int clSetKernelArgMemEx(cl_kernel kern, cl_uint arg_index, size_t arg_size, c
             read_only = true;
     }
 
-    kern->args[arg_index] = {read_only, *(cl_mem*)arg_value};
+    cl_mem arg = *(cl_mem*)arg_value;
+
+    if(arg == nullptr)
+        return clSetKernelArg(kern, arg_index, arg_size, arg_value);
+
+    kern->args[arg_index] = {read_only, arg};
 
     assert(arg_size == sizeof(cl_mem));
 
