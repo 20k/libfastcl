@@ -7,6 +7,7 @@
 #define CL_USE_DEPRECATED_OPENCL_2_2_APIS
 
 #include <CL/cl.h>
+#include <CL/cl_gl.h>
 
 #define CL_QUEUE_MULTITHREADED (1 << 9)
 
@@ -110,7 +111,9 @@ IMPORT(clCreateContextFromType);
 IMPORT(clRetainContext);
 IMPORT(clReleaseContext);
 IMPORT(clGetContextInfo);
+#ifdef CL_VERSION_3_0
 IMPORT(clSetContextDestructorCallback);
+#endif
 IMPORT(clCreateCommandQueueWithProperties);
 IMPORT(clRetainCommandQueue);
 IMPORT(clReleaseCommandQueue);
@@ -119,8 +122,10 @@ IMPORT(clCreateBuffer);
 IMPORT(clCreateSubBuffer);
 IMPORT(clCreateImage);
 IMPORT(clCreatePipe);
+#ifdef CL_VERSION_3_0
 IMPORT(clCreateBufferWithProperties);
 IMPORT(clCreateImageWithProperties);
+#endif
 IMPORT(clRetainMemObject);
 IMPORT(clReleaseMemObject);
 IMPORT(clGetSupportedImageFormats);
@@ -206,6 +211,10 @@ IMPORT(clUnloadCompiler);
 IMPORT(clCreateCommandQueue);
 IMPORT(clCreateSampler);
 IMPORT(clEnqueueTask);
+
+IMPORT(clCreateFromGLTexture);
+IMPORT(clEnqueueAcquireGLObjects);
+IMPORT(clEnqueueReleaseGLObjects);
 
 bool is_event_finished(cl_event evt)
 {
@@ -563,7 +572,7 @@ std::vector<cl_event> make_events(cl_int num, const cl_event* event)
     return ret;
 }
 
-cl_int clEnqueueReadBuffer(cl_command_queue pqueue, cl_mem buffer, cl_bool blocking_read, size_t offset, size_t size, void* ptr, cl_int num_events_in_wait_list, const cl_event* event_wait_list, cl_event* event)
+cl_int clEnqueueReadBuffer(cl_command_queue pqueue, cl_mem buffer, cl_bool blocking_read, size_t offset, size_t size, void* ptr, cl_uint num_events_in_wait_list, const cl_event* event_wait_list, cl_event* event)
 {
     auto native_events = make_events(num_events_in_wait_list, event_wait_list);
 
@@ -831,7 +840,7 @@ struct _cl_program : ref_counting
 
         clGetProgramInfo_ptr((cl_program)ptr, CL_PROGRAM_BINARY_SIZES, sizeof(size_t) * num, sizes.data(), nullptr);
 
-        for(int i=0; i < num; i++)
+        for(int i=0; i < (int)num; i++)
         {
             data[i].resize(sizes[i]);
         }
@@ -1356,7 +1365,9 @@ SHIM_5(clCreateContextFromType);
 SHIM_1(clRetainContext);
 SHIM_1(clReleaseContext);
 SHIM_5(clGetContextInfo);
+#ifdef CL_VERSION_3_0
 SHIM_3(clSetContextDestructorCallback);
+#endif
 //SHIM_4(clCreateCommandQueueWithProperties);
 //SHIM_1(clRetainCommandQueue);
 //SHIM_1(clReleaseCommandQueue);
@@ -1365,8 +1376,10 @@ SHIM_5(clCreateBuffer);
 SHIM_5(clCreateSubBuffer);
 SHIM_6(clCreateImage);
 SHIM_6(clCreatePipe);
+#ifdef CL_VERSION_3_0
 SHIM_6(clCreateBufferWithProperties);
 SHIM_7(clCreateImageWithProperties);
+#endif
 SHIM_1(clRetainMemObject);
 SHIM_1(clReleaseMemObject);
 SHIM_6(clGetSupportedImageFormats);
@@ -1453,3 +1466,6 @@ SHIM_0(clUnloadCompiler);
 SHIM_5(clCreateSampler);
 SHIM_5(clEnqueueTask);
 
+SHIM_6(clCreateFromGLTexture);
+SHIM_6(clEnqueueAcquireGLObjects);
+SHIM_6(clEnqueueReleaseGLObjects);
