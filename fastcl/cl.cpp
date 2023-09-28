@@ -491,7 +491,7 @@ cl_int clEnqueueReadBufferEx(cl_command_queue command_queue, cl_mem buffer, cl_b
 
     return add_single(*pqueue, [&](cl_command_queue native_queue, const std::vector<cl_event>& evts, cl_event& out)
     {
-        return clEnqueueReadBuffer(native_queue, buffer, blocking_read, offset, size, ptr, evts.size(), evts.data(), &out);
+        return clEnqueueReadBuffer_ptr(native_queue, buffer, blocking_read, offset, size, ptr, evts.size(), evts.data(), &out);
     }, buffer, native_events, event);
 }
 
@@ -503,7 +503,7 @@ cl_int clEnqueueWriteBufferEx(cl_command_queue command_queue, cl_mem buffer, cl_
 
     return add_single(*pqueue, [&](cl_command_queue native_queue, const std::vector<cl_event>& evts, cl_event& out)
     {
-        return clEnqueueWriteBuffer(native_queue, buffer, blocking_write, offset, size, ptr, evts.size(), evts.data(), &out);
+        return clEnqueueWriteBuffer_ptr(native_queue, buffer, blocking_write, offset, size, ptr, evts.size(), evts.data(), &out);
     }, buffer, native_events, event);
 }
 
@@ -643,6 +643,9 @@ struct _cl_kernel : ref_counting
     void* ptr = nullptr;
     kernel_data data;
     bool built_from_source = false;
+
+    ///std::map<mem_object, std::vector<cl_mem_flags>> store;
+    std::map<cl_uint, cl_mem> args;
 };
 
 struct _cl_program : ref_counting
@@ -823,6 +826,63 @@ cl_program make_from_native_program(void* in)
     ptr->ptr = in;
     ptr->inc();
     return ptr;
+}
+
+cl_int clEnqueueNDRangeKernelEx(cl_command_queue command_queue, cl_kernel kernel, cl_uint work_dim, const size_t* global_work_offset, const size_t* global_work_size, const size_t* local_work_size, cl_uint num_events_in_wait_list, const cl_event* event_wait_list, cl_event* event)
+{
+    pseudo_queue* pqueue = reinterpret_cast<pseudo_queue*>(command_queue);
+
+    cleanup_events(*pqueue);
+
+    access_storage store;
+
+    for(auto& i : kernel->args)
+    {
+        store.add(i.second);
+    }
+
+    auto deps = get_implicit_dependencies(*pqueue, store);
+    auto converted_deps = make_events(num_events_in_wait_list, event_wait_list);
+
+    deps.insert(deps.end(), converted_deps.begin(), converted_deps.end());
+
+    cl_command_queue next = pqueue->next();
+
+    cl_event evt = nullptr;
+
+    cl_int ret = call(clEnqueueNDRangeKernel, next, kernel, work_dim, global_work_offset, global_work_size, local_work_size, deps.size(), deps.data(), &evt);
+
+    clFlush_ptr(next);
+
+    pqueue->event_history.push_back({evt, store, "kernel"});
+
+    if(event)
+    {
+        *event = evt;
+    }
+
+    return ret;
+}
+
+cl_int clSetKernelArgMemEx(cl_kernel kern, cl_uint arg_index, size_t arg_size, const void* arg_value)
+{
+    kern->args[arg_index] = (cl_mem)arg_value;
+
+    assert(arg_size == sizeof(cl_mem));
+
+    return call(clSetKernelArg_ptr, kern, arg_index, arg_size, arg_value);
+}
+
+cl_int clFinishEx(cl_command_queue command_queue)
+{
+    pseudo_queue* pqueue = reinterpret_cast<pseudo_queue*>(command_queue);
+
+    for(auto& i : pqueue->queues)
+    {
+        clFinish(i);
+    }
+
+    return CL_SUCCESS;
 }
 
 cl_int clRetainKernel(cl_kernel kern)
