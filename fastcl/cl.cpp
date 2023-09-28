@@ -1099,7 +1099,6 @@ cl_int clEnqueueNDRangeKernel(cl_command_queue command_queue, cl_kernel kernel, 
     return ret;
 }
 
-///todo: use the kernel access info to generate read/write info
 cl_int clSetKernelArgMemEx(cl_kernel kern, cl_uint arg_index, size_t arg_size, const void* arg_value)
 {
     bool read_only = false;
