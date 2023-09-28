@@ -216,7 +216,7 @@ IMPORT(clCreateFromGLTexture);
 IMPORT(clEnqueueAcquireGLObjects);
 IMPORT(clEnqueueReleaseGLObjects);
 
-bool is_event_finished(cl_event evt)
+static bool is_event_finished(cl_event evt)
 {
     if(evt == nullptr)
         return true;
@@ -229,7 +229,7 @@ bool is_event_finished(cl_event evt)
     return status == CL_COMPLETE;
 }
 
-cl_mem_flags get_flags(cl_mem in)
+static cl_mem_flags get_flags(cl_mem in)
 {
     cl_mem_flags ret = 0;
     clGetMemObjectInfo_ptr(in, CL_MEM_FLAGS, sizeof(cl_mem_flags), &ret, nullptr);
@@ -238,7 +238,7 @@ cl_mem_flags get_flags(cl_mem in)
 }
 
 ///does not retain
-std::optional<cl_mem> get_parent(cl_mem in)
+static std::optional<cl_mem> get_parent(cl_mem in)
 {
     cl_mem ret;
     ///unclear what this does to the reference count
@@ -251,7 +251,7 @@ std::optional<cl_mem> get_parent(cl_mem in)
 }
 
 ///does not retain
-std::pair<cl_mem, cl_mem_flags> get_barrier_vars(cl_mem in)
+static std::pair<cl_mem, cl_mem_flags> get_barrier_vars(cl_mem in)
 {
     assert(in);
 
