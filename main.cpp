@@ -119,6 +119,10 @@ int main()
     cl_int error;
     cl_context ctx = clCreateContext(props, 1, &selected_device, nullptr, nullptr, &error);
 
+    cl_command_queue cqueue = clCreateCommandQueueEx(ctx, selected_device, 0, nullptr);
+
+    printf("Post create\n");
+
     assert(error == CL_SUCCESS);
 
     const char* ptr = kstr.c_str();
@@ -206,17 +210,17 @@ int main()
 
     assert(argresult == CL_SUCCESS);
 
-    cl_command_queue cqueue = clCreateCommandQueue(ctx, selected_device, 0, nullptr);
-
     size_t global[1] = {1};
     size_t local[1] = {1};
     size_t offset[1] = {0};
 
     clSetKernelArg(k, 0, sizeof(cl_mem), &mem);
 
-    clEnqueueNDRangeKernel(cqueue, k, 1, offset, global, local, 0, nullptr, nullptr);
+    printf("Prerun\n");
 
-    clFinish(cqueue);
+    clEnqueueNDRangeKernelEx(cqueue, k, 1, offset, global, local, 0, nullptr, nullptr);
+
+    clFinishEx(cqueue);
 
     clReleaseKernel(k);
 

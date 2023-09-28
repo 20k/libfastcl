@@ -537,16 +537,18 @@ cl_int clEnqueueWriteBufferEx(cl_command_queue command_queue, cl_mem buffer, cl_
 
 cl_command_queue clCreateCommandQueueWithPropertiesEx(cl_context ctx, cl_device_id device, const cl_queue_properties* properties, cl_int* errcode_ret)
 {
+    printf("Hi there\n");
+
     pseudo_queue* pqueue = new pseudo_queue;
 
     std::vector<cl_queue_properties> props;
 
-    for(int i=0;; i++)
+    for(int i=0;; i+=2)
     {
-        props.push_back(properties[i]);
-
         if(properties[i] == 0)
             break;
+
+        props.push_back(properties[i]);
     }
 
     bool is_raw = false;
@@ -560,16 +562,23 @@ cl_command_queue clCreateCommandQueueWithPropertiesEx(cl_context ctx, cl_device_
         }
     }
 
+    cl_int err = CL_SUCCESS;
+
     if(is_raw)
-        pqueue->make_raw(ctx, device, props, errcode_ret);
+        pqueue->make_raw(ctx, device, props, &err);
     else
-        pqueue->make_managed(ctx, device, props, errcode_ret);
+        pqueue->make_managed(ctx, device, props, &err);
+
+    if(errcode_ret)
+        *errcode_ret = err;
 
     return reinterpret_cast<cl_command_queue>(pqueue);
 }
 
 cl_command_queue clCreateCommandQueueEx(cl_context ctx, cl_device_id device, cl_command_queue_properties props, cl_int* errcode_ret)
 {
+    printf("Hi there\n");
+
     cl_queue_properties compat_props[] = {CL_QUEUE_PROPERTIES, props, 0};
 
     return clCreateCommandQueueWithPropertiesEx(ctx, device, compat_props, errcode_ret);
@@ -916,7 +925,7 @@ cl_int clEnqueueNDRangeKernelEx(cl_command_queue command_queue, cl_kernel kernel
 
     cl_event evt = nullptr;
 
-    cl_int ret = call(clEnqueueNDRangeKernel, next, kernel, work_dim, global_work_offset, global_work_size, local_work_size, deps.size(), deps.data(), &evt);
+    cl_int ret = call(clEnqueueNDRangeKernel_ptr, next, kernel, work_dim, global_work_offset, global_work_size, local_work_size, deps.size(), deps.data(), &evt);
 
     clFlush_ptr(next);
 
