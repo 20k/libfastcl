@@ -119,7 +119,7 @@ int main()
     cl_int error;
     cl_context ctx = clCreateContext(props, 1, &selected_device, nullptr, nullptr, &error);
 
-    cl_command_queue cqueue = clCreateCommandQueueEx(ctx, selected_device, CL_QUEUE_MULTITHREADED, nullptr);
+    cl_command_queue cqueue = clCreateCommandQueue(ctx, selected_device, CL_QUEUE_MULTITHREADED, nullptr);
 
     printf("Post create\n");
 
@@ -218,9 +218,9 @@ int main()
 
     printf("Prerun\n");
 
-    clEnqueueNDRangeKernelEx(cqueue, k, 1, offset, global, local, 0, nullptr, nullptr);
+    clEnqueueNDRangeKernel(cqueue, k, 1, offset, global, local, 0, nullptr, nullptr);
 
-    clFinishEx(cqueue);
+    clFinish(cqueue);
 
     clReleaseKernel(k);
 

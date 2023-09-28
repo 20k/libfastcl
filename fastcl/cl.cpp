@@ -6,9 +6,12 @@
 #define CL_USE_DEPRECATED_OPENCL_2_1_APIS
 #define CL_USE_DEPRECATED_OPENCL_2_2_APIS
 
+#include <CL/cl.h>
+
+#define CL_QUEUE_MULTITHREADED (1 << 9)
+
 #include <nlohmann/json.hpp>
 #include <iostream>
-#include "cl.h"
 #include <boost/smart_ptr/intrusive_ptr.hpp>
 #include <boost/smart_ptr/intrusive_ref_counter.hpp>
 
@@ -350,7 +353,7 @@ struct _cl_command_queue
         auto props = properties;
         props.push_back(0);
 
-        accessory = clCreateCommandQueueWithProperties(ctx, device, properties.data(), errcode_ret);
+        accessory = clCreateCommandQueueWithProperties_ptr(ctx, device, properties.data(), errcode_ret);
     }
 
     void make_managed(cl_context ctx, cl_device_id device, const std::vector<cl_queue_properties>& properties, cl_int* errcode_ret)
@@ -517,7 +520,7 @@ std::vector<cl_event> make_events(cl_int num, const cl_event* event)
     return ret;
 }
 
-cl_int clEnqueueReadBufferEx(cl_command_queue pqueue, cl_mem buffer, cl_bool blocking_read, size_t offset, size_t size, void* ptr, cl_int num_events_in_wait_list, const cl_event* event_wait_list, cl_event* event)
+cl_int clEnqueueReadBuffer(cl_command_queue pqueue, cl_mem buffer, cl_bool blocking_read, size_t offset, size_t size, void* ptr, cl_int num_events_in_wait_list, const cl_event* event_wait_list, cl_event* event)
 {
     auto native_events = make_events(num_events_in_wait_list, event_wait_list);
 
@@ -527,7 +530,7 @@ cl_int clEnqueueReadBufferEx(cl_command_queue pqueue, cl_mem buffer, cl_bool blo
     }, buffer, native_events, event);
 }
 
-cl_int clEnqueueWriteBufferEx(cl_command_queue pqueue, cl_mem buffer, cl_bool blocking_write, size_t offset, size_t size, const void* ptr, cl_uint num_events_in_wait_list, const cl_event* event_wait_list, cl_event* event)
+cl_int clEnqueueWriteBuffer(cl_command_queue pqueue, cl_mem buffer, cl_bool blocking_write, size_t offset, size_t size, const void* ptr, cl_uint num_events_in_wait_list, const cl_event* event_wait_list, cl_event* event)
 {
     auto native_events = make_events(num_events_in_wait_list, event_wait_list);
 
@@ -537,7 +540,7 @@ cl_int clEnqueueWriteBufferEx(cl_command_queue pqueue, cl_mem buffer, cl_bool bl
     }, buffer, native_events, event);
 }
 
-cl_command_queue clCreateCommandQueueWithPropertiesEx(cl_context ctx, cl_device_id device, const cl_queue_properties* properties, cl_int* errcode_ret)
+cl_command_queue clCreateCommandQueueWithProperties(cl_context ctx, cl_device_id device, const cl_queue_properties* properties, cl_int* errcode_ret)
 {
     _cl_command_queue* pqueue = new _cl_command_queue;
 
@@ -575,11 +578,11 @@ cl_command_queue clCreateCommandQueueWithPropertiesEx(cl_context ctx, cl_device_
     return reinterpret_cast<cl_command_queue>(pqueue);
 }
 
-cl_command_queue clCreateCommandQueueEx(cl_context ctx, cl_device_id device, cl_command_queue_properties props, cl_int* errcode_ret)
+cl_command_queue clCreateCommandQueue(cl_context ctx, cl_device_id device, cl_command_queue_properties props, cl_int* errcode_ret)
 {
     cl_queue_properties compat_props[] = {CL_QUEUE_PROPERTIES, props, 0};
 
-    return clCreateCommandQueueWithPropertiesEx(ctx, device, compat_props, errcode_ret);
+    return clCreateCommandQueueWithProperties(ctx, device, compat_props, errcode_ret);
 }
 
 ///ok program flow:
@@ -901,10 +904,10 @@ void clEndSpliceEx(cl_command_queue real_queue, cl_command_queue c_pqueue)
     }
 }
 
-cl_int clEnqueueNDRangeKernelEx(cl_command_queue command_queue, cl_kernel kernel, cl_uint work_dim, const size_t* global_work_offset, const size_t* global_work_size, const size_t* local_work_size, cl_uint num_events_in_wait_list, const cl_event* event_wait_list, cl_event* event)
+cl_int clEnqueueNDRangeKernel(cl_command_queue command_queue, cl_kernel kernel, cl_uint work_dim, const size_t* global_work_offset, const size_t* global_work_size, const size_t* local_work_size, cl_uint num_events_in_wait_list, const cl_event* event_wait_list, cl_event* event)
 {
     if(!command_queue->is_managed_queue)
-        return clEnqueueNDRangeKernel_ptr(command_queue->accessory, kernel, work_dim, global_work_offset, global_work_size, local_work_size, num_events_in_wait_list, event_wait_list, event);
+        return clEnqueueNDRangeKernel_ptr(command_queue->accessory, to_native_type(kernel), work_dim, global_work_offset, global_work_size, local_work_size, num_events_in_wait_list, event_wait_list, event);
 
     cleanup_events(*command_queue);
 
@@ -924,7 +927,7 @@ cl_int clEnqueueNDRangeKernelEx(cl_command_queue command_queue, cl_kernel kernel
 
     cl_event evt = nullptr;
 
-    cl_int ret = call(clEnqueueNDRangeKernel_ptr, next, kernel, work_dim, global_work_offset, global_work_size, local_work_size, deps.size(), deps.data(), &evt);
+    cl_int ret = clEnqueueNDRangeKernel_ptr(next, to_native_type(kernel), work_dim, global_work_offset, global_work_size, local_work_size, deps.size(), deps.data(), &evt);
 
     clFlush_ptr(next);
 
@@ -947,7 +950,20 @@ cl_int clSetKernelArgMemEx(cl_kernel kern, cl_uint arg_index, size_t arg_size, c
     return call(clSetKernelArg_ptr, kern, arg_index, arg_size, arg_value);
 }
 
-cl_int clFinishEx(cl_command_queue command_queue)
+cl_int clFlush(cl_command_queue command_queue)
+{
+    if(!command_queue->is_managed_queue)
+        return clFlush_ptr(command_queue->accessory);
+
+    for(auto& i : command_queue->queues)
+    {
+        clFlush_ptr(i);
+    }
+
+    return CL_SUCCESS;
+}
+
+cl_int clFinish(cl_command_queue command_queue)
 {
     if(!command_queue->is_managed_queue)
         return clFinish_ptr(command_queue->accessory);
@@ -1235,7 +1251,7 @@ SHIM_1(clRetainContext);
 SHIM_1(clReleaseContext);
 SHIM_5(clGetContextInfo);
 SHIM_3(clSetContextDestructorCallback);
-SHIM_4(clCreateCommandQueueWithProperties);
+//SHIM_4(clCreateCommandQueueWithProperties);
 SHIM_1(clRetainCommandQueue);
 SHIM_1(clReleaseCommandQueue);
 SHIM_5(clGetCommandQueueInfo);
@@ -1291,11 +1307,11 @@ SHIM_1(clReleaseEvent);
 SHIM_2(clSetUserEventStatus);
 SHIM_4(clSetEventCallback);
 SHIM_5(clGetEventProfilingInfo);
-SHIM_1(clFlush);
-SHIM_1(clFinish);
-SHIM_9(clEnqueueReadBuffer);
+//SHIM_1(clFlush);
+//SHIM_1(clFinish);
+//SHIM_9(clEnqueueReadBuffer);
 SHIM_14(clEnqueueReadBufferRect);
-SHIM_9(clEnqueueWriteBuffer);
+//SHIM_9(clEnqueueWriteBuffer);
 SHIM_14(clEnqueueWriteBufferRect);
 SHIM_9(clEnqueueFillBuffer);
 SHIM_9(clEnqueueCopyBuffer);
@@ -1310,7 +1326,7 @@ SHIM_10(clEnqueueMapBuffer);
 SHIM_12(clEnqueueMapImage);
 SHIM_6(clEnqueueUnmapMemObject);
 SHIM_7(clEnqueueMigrateMemObjects);
-SHIM_9(clEnqueueNDRangeKernel);
+//SHIM_9(clEnqueueNDRangeKernel);
 SHIM_10(clEnqueueNativeKernel);
 SHIM_4(clEnqueueMarkerWithWaitList);
 SHIM_4(clEnqueueBarrierWithWaitList);
@@ -1327,7 +1343,7 @@ SHIM_3(clEnqueueWaitForEvents);
 SHIM_1(clEnqueueBarrier);
 SHIM_0(clUnloadCompiler);
 //SHIM_1(clGetExtensionFunctionAddress);
-SHIM_4(clCreateCommandQueue);
+//SHIM_4(clCreateCommandQueue);
 SHIM_5(clCreateSampler);
 SHIM_5(clEnqueueTask);
 
