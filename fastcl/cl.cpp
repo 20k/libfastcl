@@ -279,7 +279,7 @@ struct access_storage
     std::map<cl_mem, std::vector<cl_mem_flags>> store;
     bool is_barrier = false;
 
-    void add(cl_mem in)
+    void add(bool manual_read_only, cl_mem in)
     {
         assert(in);
 
@@ -287,7 +287,10 @@ struct access_storage
 
         clRetainMemObject_ptr(vars.first);
 
-        store[vars.first].push_back(vars.second);
+        if(manual_read_only)
+            store[vars.first].push_back(CL_MEM_READ_ONLY);
+        else
+            store[vars.first].push_back(vars.second);
     }
 
     /*void remove(cl_mem in)
@@ -459,7 +462,7 @@ std::vector<cl_event> get_implicit_dependencies(_cl_command_queue& pqueue, const
 std::vector<cl_event> get_implicit_dependencies(_cl_command_queue& pqueue, cl_mem obj)
 {
     access_storage store;
-    store.add(obj);
+    store.add(false, obj);
 
     auto deps = get_implicit_dependencies(pqueue, store);
 
@@ -559,7 +562,7 @@ auto add_single(_cl_command_queue& pqueue, T&& func, cl_mem obj, const std::vect
     assert(next);
 
     access_storage store;
-    store.add(obj);
+    store.add(false, obj);
 
     clRetainEvent_ptr(next);
     pqueue.event_history.push_back({next, store, "generic"});
@@ -810,7 +813,7 @@ struct _cl_kernel : ref_counting
     bool built_from_source = false;
 
     ///std::map<mem_object, std::vector<cl_mem_flags>> store;
-    std::map<cl_uint, cl_mem> args;
+    std::map<cl_uint, std::pair<bool, cl_mem>> args;
 };
 
 struct _cl_program : ref_counting
@@ -1068,7 +1071,7 @@ cl_int clEnqueueNDRangeKernel(cl_command_queue command_queue, cl_kernel kernel, 
 
     for(auto& i : kernel->args)
     {
-        store.add(i.second);
+        store.add(i.second.first, i.second.second);
     }
 
     auto deps = get_implicit_dependencies(*command_queue, store);
@@ -1099,7 +1102,17 @@ cl_int clEnqueueNDRangeKernel(cl_command_queue command_queue, cl_kernel kernel, 
 ///todo: use the kernel access info to generate read/write info
 cl_int clSetKernelArgMemEx(cl_kernel kern, cl_uint arg_index, size_t arg_size, const void* arg_value)
 {
-    kern->args[arg_index] = *(cl_mem*)arg_value;
+    bool read_only = false;
+
+    {
+        cl_kernel_arg_type_qualifier qual = 0;
+        clGetKernelArgInfo(kern, arg_index, CL_KERNEL_ARG_TYPE_QUALIFIER, sizeof(cl_kernel_arg_type_qualifier), &qual, nullptr);
+
+        if(qual & CL_KERNEL_ARG_TYPE_CONST)
+            read_only = true;
+    }
+
+    kern->args[arg_index] = {read_only, *(cl_mem*)arg_value};
 
     assert(arg_size == sizeof(cl_mem));
 
@@ -1272,17 +1285,16 @@ cl_program clCreateProgramWithBinary(cl_context ctx, cl_uint num_devices, const 
 
 cl_int clBuildProgram(cl_program program, cl_uint num_devices, const cl_device_id* device_list, const char* options, void (CL_CALLBACK *  pfn_notify)(cl_program program, void * user_data), void* user_data)
 {
-    cl_int ret = call(clBuildProgram_ptr, program, num_devices, device_list, options, pfn_notify, user_data);
+    std::string opt_str;
 
     if(options)
-    {
-        std::string opt(options);
+        opt_str = options;
 
-        if(opt.contains("-cl-kernel-arg-info"))
-        {
-            program->built_with_program_info = true;
-        }
-    }
+    opt_str += " -cl-kernel-arg-info";
+
+    cl_int ret = call(clBuildProgram_ptr, program, num_devices, device_list, opt_str.c_str(), pfn_notify, user_data);
+
+    program->built_with_program_info = true;
 
     if(program->built_from_source && program->built_with_program_info)
         program->set_kernel_data(program->load_kernel_arg_data());
