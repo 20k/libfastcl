@@ -233,7 +233,7 @@ std::optional<cl_mem> get_parent(cl_mem in)
 {
     cl_mem ret;
     ///unclear what this does to the reference count
-    clGetMemObjectInfo(in, CL_MEM_ASSOCIATED_MEMOBJECT, sizeof(cl_mem), &ret, nullptr);
+    clGetMemObjectInfo_ptr(in, CL_MEM_ASSOCIATED_MEMOBJECT, sizeof(cl_mem), &ret, nullptr);
 
     if(ret == nullptr)
         return std::nullopt;
@@ -341,7 +341,6 @@ bool requires_memory_barrier(const access_storage& base, const access_storage& t
 
 struct _cl_command_queue
 {
-    bool raw_queue = false;
     cl_command_queue accessory;
     std::vector<cl_command_queue> queues;
     int which_queue = 0;
@@ -351,6 +350,8 @@ struct _cl_command_queue
 
     void make_raw(cl_context ctx, cl_device_id device, const std::vector<cl_queue_properties>& properties, cl_int* errcode_ret)
     {
+        is_managed_queue = false;
+
         auto props = properties;
         props.push_back(0);
 
@@ -359,8 +360,11 @@ struct _cl_command_queue
 
     void make_managed(cl_context ctx, cl_device_id device, const std::vector<cl_queue_properties>& properties, cl_int* errcode_ret)
     {
+        is_managed_queue = true;
+
         cl_command_queue_properties props[] = {CL_QUEUE_PROPERTIES, 0, 0};
 
+        ///out of order queue?
         accessory = clCreateCommandQueueWithProperties_ptr(ctx, device, props, errcode_ret);
 
         assert(*errcode_ret == CL_SUCCESS);
@@ -553,11 +557,12 @@ cl_command_queue clCreateCommandQueueWithProperties(cl_context ctx, cl_device_id
             break;
 
         props.push_back(properties[i]);
+        props.push_back(properties[i+1]);
     }
 
     bool is_raw = true;
 
-    for(int i=0; i < (int)props.size(); i++)
+    for(int i=0; i < (int)props.size() - 1; i++)
     {
         if(props[i] == CL_QUEUE_PROPERTIES)
         {
@@ -944,7 +949,7 @@ cl_int clEnqueueNDRangeKernel(cl_command_queue command_queue, cl_kernel kernel, 
 
 cl_int clSetKernelArgMemEx(cl_kernel kern, cl_uint arg_index, size_t arg_size, const void* arg_value)
 {
-    kern->args[arg_index] = (cl_mem)arg_value;
+    kern->args[arg_index] = *(cl_mem*)arg_value;
 
     assert(arg_size == sizeof(cl_mem));
 
@@ -971,7 +976,7 @@ cl_int clFinish(cl_command_queue command_queue)
 
     for(auto& i : command_queue->queues)
     {
-        clFinish(i);
+        clFinish_ptr(i);
     }
 
     return CL_SUCCESS;

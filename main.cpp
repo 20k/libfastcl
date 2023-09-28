@@ -220,6 +220,10 @@ int main()
 
     clEnqueueNDRangeKernel(cqueue, k, 1, offset, global, local, 0, nullptr, nullptr);
 
+    printf("Inhere\n");
+
+    //clEnqueueCopyBuffer(cqueue, nullptr, nullptr, 0, 0, 0, 0, nullptr, nullptr);
+
     clFinish(cqueue);
 
     clReleaseKernel(k);
