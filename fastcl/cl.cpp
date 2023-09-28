@@ -369,14 +369,16 @@ struct _cl_command_queue : ref_counting
         auto props = properties;
         props.push_back(0);
 
-        accessory = clCreateCommandQueueWithProperties_ptr(ctx, device, properties.data(), errcode_ret);
+        accessory = clCreateCommandQueueWithProperties_ptr(ctx, device, props.data(), errcode_ret);
+
+        assert(*errcode_ret == CL_SUCCESS);
     }
 
     void make_managed(cl_context ctx, cl_device_id device, const std::vector<cl_queue_properties>& properties, cl_int* errcode_ret)
     {
         is_managed_queue = true;
 
-        cl_command_queue_properties props[] = {CL_QUEUE_PROPERTIES, 0, 0};
+        cl_command_queue_properties props[] = {0};
 
         ///out of order queue?
         accessory = clCreateCommandQueueWithProperties_ptr(ctx, device, props, errcode_ret);
@@ -528,6 +530,19 @@ void cleanup_events(_cl_command_queue& pqueue)
 template<typename T>
 auto add_single(_cl_command_queue& pqueue, T&& func, cl_mem obj, const std::vector<cl_event>& events, cl_event* external_event)
 {
+    if(!pqueue.is_managed_queue)
+    {
+        cl_event evt = nullptr;
+        auto result = func(pqueue.accessory, events, evt);
+
+        if(external_event)
+            *external_event = evt;
+        else
+            clReleaseEvent(evt);
+
+        return result;
+    }
+
     cleanup_events(pqueue);
 
     std::vector<cl_event> evts = get_implicit_dependencies(pqueue, obj);
@@ -634,9 +649,18 @@ cl_command_queue clCreateCommandQueueWithProperties(cl_context ctx, cl_device_id
 
 cl_command_queue clCreateCommandQueue(cl_context ctx, cl_device_id device, cl_command_queue_properties props, cl_int* errcode_ret)
 {
-    cl_queue_properties compat_props[] = {CL_QUEUE_PROPERTIES, props, 0};
+    if(props != 0)
+    {
+        cl_queue_properties compat_props[] = {CL_QUEUE_PROPERTIES, props, 0};
 
-    return clCreateCommandQueueWithProperties(ctx, device, compat_props, errcode_ret);
+        return clCreateCommandQueueWithProperties(ctx, device, compat_props, errcode_ret);
+    }
+    else
+    {
+        cl_queue_properties compat_props[] = {0};
+
+        return clCreateCommandQueueWithProperties(ctx, device, compat_props, errcode_ret);
+    }
 }
 
 cl_int clRetainCommandQueue(cl_command_queue cqueue)
