@@ -856,6 +856,44 @@ cl_program make_from_native_program(void* in)
     return ptr;
 }
 
+void clBeginSpliceEx(cl_command_queue real_queue, cl_command_queue c_pqueue)
+{
+    cl_event evt = nullptr;
+    clEnqueueMarkerWithWaitList(real_queue, 0, nullptr, &evt);
+
+    pseudo_queue* pqueue = reinterpret_cast<pseudo_queue*>(c_pqueue);
+
+    for(cl_command_queue q : pqueue->queues)
+    {
+        clEnqueueMarkerWithWaitList(q, 1, &evt, nullptr);
+    }
+
+    clReleaseEvent(evt);
+}
+
+void clEndSpliceEx(cl_command_queue real_queue, cl_command_queue c_pqueue)
+{
+    std::vector<cl_event> evts;
+
+    pseudo_queue* pqueue = reinterpret_cast<pseudo_queue*>(c_pqueue);
+
+    for(cl_command_queue q : pqueue->queues)
+    {
+        cl_event evt;
+
+        clEnqueueMarkerWithWaitList(q, 0, nullptr, &evt);
+
+        evts.push_back(evt);
+    }
+
+    clEnqueueMarkerWithWaitList(real_queue, evts.size(), evts.data(), nullptr);
+
+    for(cl_event e : evts)
+    {
+        clReleaseEvent(e);
+    }
+}
+
 cl_int clEnqueueNDRangeKernelEx(cl_command_queue command_queue, cl_kernel kernel, cl_uint work_dim, const size_t* global_work_offset, const size_t* global_work_size, const size_t* local_work_size, cl_uint num_events_in_wait_list, const cl_event* event_wait_list, cl_event* event)
 {
     pseudo_queue* pqueue = reinterpret_cast<pseudo_queue*>(command_queue);
