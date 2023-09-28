@@ -23,6 +23,7 @@ auto to_native_type(T&& in)
 
 _cl_kernel* to_native_type(_cl_kernel* in);
 _cl_program* to_native_type(_cl_program* in);
+_cl_command_queue* to_native_type(_cl_command_queue* in);
 
 struct api_struct
 {
