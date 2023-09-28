@@ -611,6 +611,16 @@ cl_int clEnqueueWriteBuffer(cl_command_queue pqueue, cl_mem buffer, cl_bool bloc
     }, buffer, native_events, event);
 }
 
+cl_int clEnqueueFillBuffer(cl_command_queue pqueue, cl_mem buffer, const void* pattern, size_t pattern_size, size_t offset, size_t size, cl_uint num_events_in_wait_list, const cl_event* event_wait_list, cl_event* event)
+{
+    auto native_events = make_events(num_events_in_wait_list, event_wait_list);
+
+    return add_single(*pqueue, [&](cl_command_queue native_queue, const std::vector<cl_event>& evts, cl_event& out)
+    {
+        return clEnqueueFillBuffer_ptr(native_queue, buffer, pattern, pattern_size, offset, size, evts.size(), evts.data(), &out);
+    }, buffer, native_events, event);
+}
+
 cl_command_queue clCreateCommandQueueWithProperties(cl_context ctx, cl_device_id device, const cl_queue_properties* properties, cl_int* errcode_ret)
 {
     _cl_command_queue* pqueue = new _cl_command_queue;
@@ -1506,7 +1516,7 @@ SHIM_5(clGetEventProfilingInfo);
 SHIM_14(clEnqueueReadBufferRect);
 //SHIM_9(clEnqueueWriteBuffer);
 SHIM_14(clEnqueueWriteBufferRect);
-SHIM_9(clEnqueueFillBuffer);
+//SHIM_9(clEnqueueFillBuffer);
 SHIM_9(clEnqueueCopyBuffer);
 SHIM_13(clEnqueueCopyBufferRect);
 SHIM_11(clEnqueueReadImage);
