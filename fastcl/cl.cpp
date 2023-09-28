@@ -285,12 +285,12 @@ struct access_storage
 
         auto vars = get_barrier_vars(in);
 
-        clRetainMemObject_ptr(in);
+        clRetainMemObject_ptr(vars.first);
 
         store[vars.first].push_back(vars.second);
     }
 
-    void remove(cl_mem in)
+    /*void remove(cl_mem in)
     {
         auto it = store.find(in);
 
@@ -299,7 +299,7 @@ struct access_storage
 
         clReleaseMemObject_ptr(in);
         store.erase(it);
-    }
+    }*/
 
     void remove_all()
     {
@@ -550,6 +550,7 @@ auto add_single(_cl_command_queue& pqueue, T&& func, cl_mem obj, const std::vect
     evts.insert(evts.end(), events.begin(), events.end());
 
     cl_command_queue exec_on = pqueue.next();
+    //auto exec_on = pqueue.queues[0];
 
     cl_event next = nullptr;
 
@@ -1038,6 +1039,8 @@ cl_int clEnqueueNDRangeKernel(cl_command_queue command_queue, cl_kernel kernel, 
 {
     if(!command_queue->is_managed_queue)
         return clEnqueueNDRangeKernel_ptr(command_queue->accessory, to_native_type(kernel), work_dim, global_work_offset, global_work_size, local_work_size, num_events_in_wait_list, event_wait_list, event);
+    //else
+    //    return clEnqueueNDRangeKernel_ptr(command_queue->queues[0], to_native_type(kernel), work_dim, global_work_offset, global_work_size, local_work_size, num_events_in_wait_list, event_wait_list, event);
 
     cleanup_events(*command_queue);
 
@@ -1053,14 +1056,16 @@ cl_int clEnqueueNDRangeKernel(cl_command_queue command_queue, cl_kernel kernel, 
 
     deps.insert(deps.end(), converted_deps.begin(), converted_deps.end());
 
-    cl_command_queue next = command_queue->next();
+    cl_command_queue exec_on = command_queue->next();
+    //cl_command_queue exec_on = command_queue->queues[0];
 
     cl_event evt = nullptr;
 
-    cl_int ret = clEnqueueNDRangeKernel_ptr(next, to_native_type(kernel), work_dim, global_work_offset, global_work_size, local_work_size, deps.size(), deps.data(), &evt);
+    cl_int ret = clEnqueueNDRangeKernel_ptr(exec_on, to_native_type(kernel), work_dim, global_work_offset, global_work_size, local_work_size, deps.size(), deps.data(), &evt);
 
-    clFlush_ptr(next);
+    clFlush_ptr(exec_on);
 
+    clRetainEvent_ptr(evt);
     command_queue->event_history.push_back({evt, store, "kernel"});
 
     if(event)
@@ -1077,6 +1082,16 @@ cl_int clSetKernelArgMemEx(cl_kernel kern, cl_uint arg_index, size_t arg_size, c
     kern->args[arg_index] = *(cl_mem*)arg_value;
 
     assert(arg_size == sizeof(cl_mem));
+
+    return call(clSetKernelArg_ptr, kern, arg_index, arg_size, arg_value);
+}
+
+cl_int clSetKernelArg(cl_kernel kern, cl_uint arg_index, size_t arg_size, const void* arg_value)
+{
+    auto it = kern->args.find(arg_index);
+
+    if(it != kern->args.end())
+        kern->args.erase(it);
 
     return call(clSetKernelArg_ptr, kern, arg_index, arg_size, arg_value);
 }
@@ -1439,7 +1454,7 @@ SHIM_6(clGetProgramBuildInfo);
 //SHIM_2(clCloneKernel);
 //SHIM_1(clRetainKernel);
 //SHIM_1(clReleaseKernel);
-SHIM_4(clSetKernelArg);
+//SHIM_4(clSetKernelArg);
 SHIM_3(clSetKernelArgSVMPointer);
 SHIM_4(clSetKernelExecInfo);
 SHIM_5(clGetKernelInfo);
