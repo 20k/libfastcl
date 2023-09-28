@@ -335,12 +335,13 @@ bool requires_memory_barrier(const access_storage& base, const access_storage& t
 }
 }
 
-struct pseudo_queue
+struct _cl_command_queue
 {
     bool raw_queue = false;
     cl_command_queue accessory;
     std::vector<cl_command_queue> queues;
     int which_queue = 0;
+    bool is_managed_queue = false;
 
     std::vector<std::tuple<cl_event, access_storage, std::string>> event_history;
 
@@ -376,9 +377,11 @@ struct pseudo_queue
     }
 };
 
+_cl_command_queue* to_native_type(_cl_command_queue* in){assert(!in->is_managed_queue); return in->accessory;}
+
 namespace
 {
-std::vector<cl_event> get_implicit_dependencies(pseudo_queue& pqueue, const access_storage& store)
+std::vector<cl_event> get_implicit_dependencies(_cl_command_queue& pqueue, const access_storage& store)
 {
     std::vector<cl_event> deps;
 
@@ -393,7 +396,7 @@ std::vector<cl_event> get_implicit_dependencies(pseudo_queue& pqueue, const acce
     return deps;
 }
 
-std::vector<cl_event> get_implicit_dependencies(pseudo_queue& pqueue, cl_mem obj)
+std::vector<cl_event> get_implicit_dependencies(_cl_command_queue& pqueue, cl_mem obj)
 {
     access_storage store;
     store.add(obj);
@@ -444,7 +447,7 @@ cl::event add(const T& func, cl::mem_object& obj, const std::vector<cl::event>& 
     }
 }*/
 
-void cleanup_events(pseudo_queue& pqueue)
+void cleanup_events(_cl_command_queue& pqueue)
 {
     for(int i=0; i < (int)pqueue.event_history.size(); i++)
     {
@@ -465,7 +468,7 @@ void cleanup_events(pseudo_queue& pqueue)
 }
 
 template<typename T>
-auto add_single(pseudo_queue& pqueue, T&& func, cl_mem obj, const std::vector<cl_event>& events, cl_event* external_event)
+auto add_single(_cl_command_queue& pqueue, T&& func, cl_mem obj, const std::vector<cl_event>& events, cl_event* external_event)
 {
     cleanup_events(pqueue);
 
@@ -511,10 +514,8 @@ std::vector<cl_event> make_events(cl_int num, const cl_event* event)
     return ret;
 }
 
-cl_int clEnqueueReadBufferEx(cl_command_queue command_queue, cl_mem buffer, cl_bool blocking_read, size_t offset, size_t size, void* ptr, cl_int num_events_in_wait_list, const cl_event* event_wait_list, cl_event* event)
+cl_int clEnqueueReadBufferEx(cl_command_queue pqueue, cl_mem buffer, cl_bool blocking_read, size_t offset, size_t size, void* ptr, cl_int num_events_in_wait_list, const cl_event* event_wait_list, cl_event* event)
 {
-    pseudo_queue* pqueue = reinterpret_cast<pseudo_queue*>(command_queue);
-
     auto native_events = make_events(num_events_in_wait_list, event_wait_list);
 
     return add_single(*pqueue, [&](cl_command_queue native_queue, const std::vector<cl_event>& evts, cl_event& out)
@@ -523,10 +524,8 @@ cl_int clEnqueueReadBufferEx(cl_command_queue command_queue, cl_mem buffer, cl_b
     }, buffer, native_events, event);
 }
 
-cl_int clEnqueueWriteBufferEx(cl_command_queue command_queue, cl_mem buffer, cl_bool blocking_write, size_t offset, size_t size, const void* ptr, cl_uint num_events_in_wait_list, const cl_event* event_wait_list, cl_event* event)
+cl_int clEnqueueWriteBufferEx(cl_command_queue pqueue, cl_mem buffer, cl_bool blocking_write, size_t offset, size_t size, const void* ptr, cl_uint num_events_in_wait_list, const cl_event* event_wait_list, cl_event* event)
 {
-    pseudo_queue* pqueue = reinterpret_cast<pseudo_queue*>(command_queue);
-
     auto native_events = make_events(num_events_in_wait_list, event_wait_list);
 
     return add_single(*pqueue, [&](cl_command_queue native_queue, const std::vector<cl_event>& evts, cl_event& out)
@@ -539,7 +538,7 @@ cl_command_queue clCreateCommandQueueWithPropertiesEx(cl_context ctx, cl_device_
 {
     printf("Hi there\n");
 
-    pseudo_queue* pqueue = new pseudo_queue;
+    _cl_command_queue* pqueue = new _cl_command_queue;
 
     std::vector<cl_queue_properties> props;
 
@@ -867,12 +866,12 @@ cl_program make_from_native_program(void* in)
 
 void clBeginSpliceEx(cl_command_queue real_queue, cl_command_queue c_pqueue)
 {
+    assert(!real_queue->is_managed_queue);
+
     cl_event evt = nullptr;
-    clEnqueueMarkerWithWaitList(real_queue, 0, nullptr, &evt);
+    clEnqueueMarkerWithWaitList(real_queue->accessory, 0, nullptr, &evt);
 
-    pseudo_queue* pqueue = reinterpret_cast<pseudo_queue*>(c_pqueue);
-
-    for(cl_command_queue q : pqueue->queues)
+    for(cl_command_queue q : c_pqueue->queues)
     {
         clEnqueueMarkerWithWaitList(q, 1, &evt, nullptr);
     }
@@ -882,11 +881,11 @@ void clBeginSpliceEx(cl_command_queue real_queue, cl_command_queue c_pqueue)
 
 void clEndSpliceEx(cl_command_queue real_queue, cl_command_queue c_pqueue)
 {
+    assert(!real_queue->is_managed_queue);
+
     std::vector<cl_event> evts;
 
-    pseudo_queue* pqueue = reinterpret_cast<pseudo_queue*>(c_pqueue);
-
-    for(cl_command_queue q : pqueue->queues)
+    for(cl_command_queue q : c_pqueue->queues)
     {
         cl_event evt;
 
@@ -895,7 +894,7 @@ void clEndSpliceEx(cl_command_queue real_queue, cl_command_queue c_pqueue)
         evts.push_back(evt);
     }
 
-    clEnqueueMarkerWithWaitList(real_queue, evts.size(), evts.data(), nullptr);
+    clEnqueueMarkerWithWaitList(real_queue->accessory, evts.size(), evts.data(), nullptr);
 
     for(cl_event e : evts)
     {
@@ -905,9 +904,10 @@ void clEndSpliceEx(cl_command_queue real_queue, cl_command_queue c_pqueue)
 
 cl_int clEnqueueNDRangeKernelEx(cl_command_queue command_queue, cl_kernel kernel, cl_uint work_dim, const size_t* global_work_offset, const size_t* global_work_size, const size_t* local_work_size, cl_uint num_events_in_wait_list, const cl_event* event_wait_list, cl_event* event)
 {
-    pseudo_queue* pqueue = reinterpret_cast<pseudo_queue*>(command_queue);
+    if(!command_queue->is_managed_queue)
+        return clEnqueueNDRangeKernel_ptr(command_queue->accessory, kernel, work_dim, global_work_offset, global_work_size, local_work_size, num_events_in_wait_list, event_wait_list, event);
 
-    cleanup_events(*pqueue);
+    cleanup_events(*command_queue);
 
     access_storage store;
 
@@ -916,12 +916,12 @@ cl_int clEnqueueNDRangeKernelEx(cl_command_queue command_queue, cl_kernel kernel
         store.add(i.second);
     }
 
-    auto deps = get_implicit_dependencies(*pqueue, store);
+    auto deps = get_implicit_dependencies(*command_queue, store);
     auto converted_deps = make_events(num_events_in_wait_list, event_wait_list);
 
     deps.insert(deps.end(), converted_deps.begin(), converted_deps.end());
 
-    cl_command_queue next = pqueue->next();
+    cl_command_queue next = command_queue->next();
 
     cl_event evt = nullptr;
 
@@ -929,7 +929,7 @@ cl_int clEnqueueNDRangeKernelEx(cl_command_queue command_queue, cl_kernel kernel
 
     clFlush_ptr(next);
 
-    pqueue->event_history.push_back({evt, store, "kernel"});
+    command_queue->event_history.push_back({evt, store, "kernel"});
 
     if(event)
     {
@@ -950,9 +950,10 @@ cl_int clSetKernelArgMemEx(cl_kernel kern, cl_uint arg_index, size_t arg_size, c
 
 cl_int clFinishEx(cl_command_queue command_queue)
 {
-    pseudo_queue* pqueue = reinterpret_cast<pseudo_queue*>(command_queue);
+    if(!command_queue->is_managed_queue)
+        return clFinish_ptr(command_queue->accessory);
 
-    for(auto& i : pqueue->queues)
+    for(auto& i : command_queue->queues)
     {
         clFinish(i);
     }
