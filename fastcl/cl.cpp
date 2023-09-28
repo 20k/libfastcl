@@ -995,6 +995,16 @@ cl_program make_from_native_program(void* in)
 
 void clBeginSpliceEx(cl_command_queue real_queue, cl_command_queue c_pqueue)
 {
+    if(!real_queue->is_managed_queue && !c_pqueue->is_managed_queue)
+    {
+        cl_event evt = nullptr;
+        clEnqueueMarkerWithWaitList_ptr(real_queue->accessory, 0, nullptr, &evt);
+
+        clEnqueueMarkerWithWaitList_ptr(c_pqueue->accessory, 1, &evt, nullptr);
+        clReleaseEvent_ptr(evt);
+        return;
+    }
+
     assert(!real_queue->is_managed_queue);
     assert(c_pqueue->is_managed_queue);
 
@@ -1013,6 +1023,16 @@ void clBeginSpliceEx(cl_command_queue real_queue, cl_command_queue c_pqueue)
 
 void clEndSpliceEx(cl_command_queue real_queue, cl_command_queue c_pqueue)
 {
+    if(!real_queue->is_managed_queue && !c_pqueue->is_managed_queue)
+    {
+        cl_event evt = nullptr;
+        clEnqueueMarkerWithWaitList_ptr(c_pqueue->accessory, 0, nullptr, &evt);
+
+        clEnqueueMarkerWithWaitList_ptr(real_queue->accessory, 1, &evt, nullptr);
+        clReleaseEvent_ptr(evt);
+        return;
+    }
+
     assert(!real_queue->is_managed_queue);
     assert(c_pqueue->is_managed_queue);
 
