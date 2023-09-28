@@ -343,7 +343,7 @@ bool requires_memory_barrier(const access_storage& base, const access_storage& t
 }
 }
 
-struct _cl_command_queue
+struct _cl_command_queue : ref_counting
 {
     cl_command_queue accessory;
     std::vector<cl_command_queue> queues;
@@ -586,6 +586,7 @@ cl_int clEnqueueWriteBuffer(cl_command_queue pqueue, cl_mem buffer, cl_bool bloc
 cl_command_queue clCreateCommandQueueWithProperties(cl_context ctx, cl_device_id device, const cl_queue_properties* properties, cl_int* errcode_ret)
 {
     _cl_command_queue* pqueue = new _cl_command_queue;
+    pqueue->inc();
 
     std::vector<cl_queue_properties> props;
 
@@ -627,6 +628,54 @@ cl_command_queue clCreateCommandQueue(cl_context ctx, cl_device_id device, cl_co
     cl_queue_properties compat_props[] = {CL_QUEUE_PROPERTIES, props, 0};
 
     return clCreateCommandQueueWithProperties(ctx, device, compat_props, errcode_ret);
+}
+
+cl_int clRetainCommandQueue(cl_command_queue cqueue)
+{
+    cqueue->inc();
+
+    if(!cqueue->is_managed_queue)
+        return clRetainCommandQueue_ptr(cqueue->accessory);
+    else
+    {
+        clRetainCommandQueue_ptr(cqueue->accessory);
+
+        for(auto& i : cqueue->queues)
+            clRetainCommandQueue_ptr(i);
+
+        return CL_SUCCESS;
+    }
+}
+
+cl_int clReleaseCommandQueue(cl_command_queue cqueue)
+{
+    auto decrement_and_delete = [&]()
+    {
+        if(cqueue->dec())
+        {
+            delete cqueue;
+        }
+    };
+
+    if(!cqueue->is_managed_queue)
+    {
+        cl_int result = clReleaseCommandQueue_ptr(cqueue->accessory);
+
+        decrement_and_delete();
+
+        return result;
+    }
+    else
+    {
+        clReleaseCommandQueue_ptr(cqueue->accessory);
+
+        for(auto& i : cqueue->queues)
+            clReleaseCommandQueue_ptr(i);
+
+        decrement_and_delete();
+
+        return CL_SUCCESS;
+    }
 }
 
 ///ok program flow:
@@ -1296,8 +1345,8 @@ SHIM_1(clReleaseContext);
 SHIM_5(clGetContextInfo);
 SHIM_3(clSetContextDestructorCallback);
 //SHIM_4(clCreateCommandQueueWithProperties);
-SHIM_1(clRetainCommandQueue);
-SHIM_1(clReleaseCommandQueue);
+//SHIM_1(clRetainCommandQueue);
+//SHIM_1(clReleaseCommandQueue);
 SHIM_5(clGetCommandQueueInfo);
 SHIM_5(clCreateBuffer);
 SHIM_5(clCreateSubBuffer);
