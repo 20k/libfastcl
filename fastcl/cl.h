@@ -13,7 +13,5 @@ void clEndSpliceEx(cl_command_queue real_queue, cl_command_queue c_pqueue);
 cl_int clEnqueueNDRangeKernelEx(cl_command_queue command_queue, cl_kernel kernel, cl_uint work_dim, const size_t* global_work_offset, const size_t* global_work_size, const size_t* local_work_size, cl_uint num_events_in_wait_list, const cl_event* event_wait_list, cl_event* event);
 cl_int clSetKernelArgMemEx(cl_kernel kern, cl_uint arg_index, size_t arg_size, const void* arg_value);
 cl_int clFinishEx(cl_command_queue command_queue);
-cl_int clRetainKernel(cl_kernel kern);
-cl_int clReleaseKernel(cl_kernel kern);
 
 #endif // CL_H_INCLUDED
