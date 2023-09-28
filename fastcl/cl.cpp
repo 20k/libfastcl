@@ -268,6 +268,7 @@ std::pair<cl_mem, cl_mem_flags> get_barrier_vars(cl_mem in)
 struct access_storage
 {
     std::map<cl_mem, std::vector<cl_mem_flags>> store;
+    bool is_barrier = false;
 
     void add(cl_mem in)
     {
@@ -318,6 +319,9 @@ bool requires_memory_barrier_raw(cl_mem_flags flag1, cl_mem_flags flag2)
 
 bool requires_memory_barrier(const access_storage& base, const access_storage& theirs)
 {
+    if(base.is_barrier || theirs.is_barrier)
+        return true;
+
     for(auto& [mem, flags] : theirs.store)
     {
         auto it = base.store.find(mem);
@@ -345,6 +349,7 @@ struct _cl_command_queue
     std::vector<cl_command_queue> queues;
     int which_queue = 0;
     bool is_managed_queue = false;
+    bool in_fallback_mode = false;
 
     std::vector<std::tuple<cl_event, access_storage, std::string>> event_history;
 
@@ -388,7 +393,40 @@ struct _cl_command_queue
     }
 };
 
-_cl_command_queue* to_native_type(_cl_command_queue* in){assert(!in->is_managed_queue); return in->accessory;}
+void cleanup_events(_cl_command_queue& pqueue);
+
+_cl_command_queue* to_native_type(_cl_command_queue* in)
+{
+    if(!in->is_managed_queue)
+    {
+        return in->accessory;
+    }
+    else
+    {
+        cleanup_events(*in);
+
+        std::vector<cl_event> all_events;
+
+        for(auto& i : in->event_history)
+        {
+            all_events.push_back(std::get<0>(i));
+        }
+
+        ///enqueue a marker on the 0th queue that synchronises all other queues, so that we can dump work into the 0th queue again
+        ///this assumes an in order queue
+        cl_event evt = nullptr;
+        clEnqueueMarkerWithWaitList(in->queues[0], all_events.size(), all_events.data(), &evt);
+
+        assert(evt);
+
+        access_storage store;
+        store.is_barrier = true;
+
+        in->event_history.push_back({evt, store, "compat"});
+
+        return in->queues[0];
+    }
+}
 
 namespace
 {
