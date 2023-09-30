@@ -435,7 +435,10 @@ struct _cl_command_queue : ref_counting
     }
 };
 
+namespace
+{
 void cleanup_events(_cl_command_queue& pqueue);
+}
 
 _cl_command_queue* to_native_type(_cl_command_queue* in)
 {
