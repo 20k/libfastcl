@@ -364,6 +364,12 @@ struct _cl_command_queue : ref_counting
 
     std::vector<std::tuple<cl_event, access_storage, std::string>> event_history;
 
+    _cl_command_queue(){}
+    _cl_command_queue(const _cl_command_queue&) = delete;
+    _cl_command_queue(_cl_command_queue&&) = delete;
+    _cl_command_queue& operator=(const _cl_command_queue&) = delete;
+    _cl_command_queue& operator=(_cl_command_queue&&) = delete;
+
     void make_raw(cl_context ctx, cl_device_id device, const std::vector<cl_queue_properties>& properties, cl_int* errcode_ret)
     {
         is_managed_queue = false;
@@ -403,6 +409,29 @@ struct _cl_command_queue : ref_counting
         which_queue++;
         which_queue %= queues.size();
         return q;
+    }
+
+    ~_cl_command_queue()
+    {
+        for(auto& i : event_history)
+        {
+            clReleaseEvent_ptr(std::get<0>(i));
+            std::get<1>(i).remove_all();
+        }
+
+        if(is_managed_queue)
+        {
+            clReleaseCommandQueue_ptr(accessory);
+        }
+        else
+        {
+            clReleaseCommandQueue_ptr(accessory);
+
+            for(auto& i : queues)
+            {
+                clReleaseCommandQueue_ptr(i);
+            }
+        }
     }
 };
 
@@ -469,45 +498,6 @@ std::vector<cl_event> get_implicit_dependencies(_cl_command_queue& pqueue, cl_me
 
     return deps;
 }
-}
-
-/*
-template<typename T>
-cl::event add(const T& func, cl::mem_object& obj, const std::vector<cl::event>& events)
-{
-    cleanup_events();
-
-    std::vector<cl::event> evts = get_dependencies(obj);
-
-    evts.insert(evts.end(), events.begin(), events.end());
-
-    cl::command_queue& exec_on = mqueue.next();
-
-    cl::event next = func(exec_on, evts);
-
-    cl::access_storage store;
-    store.add(obj);
-
-    event_history.push_back({next, store, "generic"});
-
-    return next;
-}*/
-
-///all *enqueue* commands, all flush and finish commands
-///clgetcommandqueueinfo
-
-///cleanup_events
-/*for(int i=0; i < (int)event_history.size(); i++)
-{
-    cl::event& test = std::get<0>(event_history[i]);
-
-    if(test.is_finished())
-    {
-        event_history.erase(event_history.begin() + i);
-        i--;
-        continue;
-    }
-}*/
 
 void cleanup_events(_cl_command_queue& pqueue)
 {
@@ -528,6 +518,7 @@ void cleanup_events(_cl_command_queue& pqueue)
         }
     }
 }
+
 
 template<typename T>
 auto add_single(_cl_command_queue& pqueue, T&& func, cl_mem obj, const std::vector<cl_event>& events, cl_event* external_event, bool read_only = false)
@@ -590,6 +581,7 @@ std::vector<cl_event> make_events(cl_int num, const cl_event* event)
     }
 
     return ret;
+}
 }
 
 cl_int clEnqueueReadBuffer(cl_command_queue pqueue, cl_mem buffer, cl_bool blocking_read, size_t offset, size_t size, void* ptr, cl_uint num_events_in_wait_list, const cl_event* event_wait_list, cl_event* event)
@@ -733,33 +725,10 @@ cl_int clRetainCommandQueue(cl_command_queue cqueue)
 
 cl_int clReleaseCommandQueue(cl_command_queue cqueue)
 {
-    auto decrement_and_delete = [&]()
-    {
-        if(cqueue->dec())
-        {
-            delete cqueue;
-        }
-    };
+    if(cqueue->dec())
+        delete cqueue;
 
-    if(!cqueue->is_managed_queue)
-    {
-        cl_int result = clReleaseCommandQueue_ptr(cqueue->accessory);
-
-        decrement_and_delete();
-
-        return result;
-    }
-    else
-    {
-        clReleaseCommandQueue_ptr(cqueue->accessory);
-
-        for(auto& i : cqueue->queues)
-            clReleaseCommandQueue_ptr(i);
-
-        decrement_and_delete();
-
-        return CL_SUCCESS;
-    }
+    return CL_SUCCESS;
 }
 
 ///ok program flow:
