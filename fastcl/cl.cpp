@@ -360,7 +360,6 @@ struct _cl_command_queue : ref_counting
     std::vector<cl_command_queue> queues;
     int which_queue = 0;
     bool is_managed_queue = false;
-    bool in_fallback_mode = false;
 
     std::vector<std::tuple<cl_event, access_storage, std::string>> event_history;
 
