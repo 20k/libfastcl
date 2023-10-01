@@ -360,6 +360,7 @@ struct _cl_command_queue : ref_counting
     std::vector<cl_command_queue> queues;
     int which_queue = 0;
     bool is_managed_queue = false;
+    std::mutex mut;
 
     std::vector<std::tuple<cl_event, access_storage, std::string>> event_history;
 
@@ -538,7 +539,16 @@ auto add_single(_cl_command_queue& pqueue, T&& func, cl_mem obj, const std::vect
         return result;
     }
 
-    cleanup_events(pqueue);
+    access_storage store;
+    store.add(read_only, obj);
+
+    {
+        std::scoped_lock lock(pqueue.mut);
+
+        cleanup_events(pqueue);
+    }
+
+    std::scoped_lock lock(pqueue.mut);
 
     std::vector<cl_event> evts = get_implicit_dependencies(pqueue, obj, read_only);
 
@@ -552,9 +562,6 @@ auto add_single(_cl_command_queue& pqueue, T&& func, cl_mem obj, const std::vect
     auto result = func(exec_on, evts, next);
 
     assert(next);
-
-    access_storage store;
-    store.add(read_only, obj);
 
     clRetainEvent_ptr(next);
     pqueue.event_history.push_back({next, store, "generic"});
@@ -1083,7 +1090,11 @@ cl_int clEnqueueNDRangeKernel(cl_command_queue command_queue, cl_kernel kernel, 
     //else
     //    return clEnqueueNDRangeKernel_ptr(command_queue->queues[0], to_native_type(kernel), work_dim, global_work_offset, global_work_size, local_work_size, num_events_in_wait_list, event_wait_list, event);
 
-    cleanup_events(*command_queue);
+
+    {
+        std::scoped_lock lock(command_queue->mut);
+        cleanup_events(*command_queue);
+    }
 
     access_storage store;
 
@@ -1092,8 +1103,11 @@ cl_int clEnqueueNDRangeKernel(cl_command_queue command_queue, cl_kernel kernel, 
         store.add(i.second.first, i.second.second);
     }
 
-    auto deps = get_implicit_dependencies(*command_queue, store);
     auto converted_deps = make_events(num_events_in_wait_list, event_wait_list);
+
+    std::scoped_lock lock(command_queue->mut);
+
+    auto deps = get_implicit_dependencies(*command_queue, store);
 
     deps.insert(deps.end(), converted_deps.begin(), converted_deps.end());
 
@@ -1164,7 +1178,10 @@ cl_int clFlush(cl_command_queue command_queue)
         clFlush_ptr(i);
     }
 
-    cleanup_events(*command_queue);
+    {
+        std::scoped_lock(command_queue->mut);
+        cleanup_events(*command_queue);
+    }
 
     return CL_SUCCESS;
 }
@@ -1179,7 +1196,10 @@ cl_int clFinish(cl_command_queue command_queue)
         clFinish_ptr(i);
     }
 
-    cleanup_events(*command_queue);
+    {
+        std::scoped_lock(command_queue->mut);
+        cleanup_events(*command_queue);
+    }
 
     return CL_SUCCESS;
 }
