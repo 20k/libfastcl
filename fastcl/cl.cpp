@@ -725,17 +725,7 @@ cl_int clRetainCommandQueue(cl_command_queue cqueue)
 {
     cqueue->inc();
 
-    if(!cqueue->is_managed_queue)
-        return clRetainCommandQueue_ptr(cqueue->accessory);
-    else
-    {
-        clRetainCommandQueue_ptr(cqueue->accessory);
-
-        for(auto& i : cqueue->queues)
-            clRetainCommandQueue_ptr(i);
-
-        return CL_SUCCESS;
-    }
+    return CL_SUCCESS;
 }
 
 cl_int clReleaseCommandQueue(cl_command_queue cqueue)
