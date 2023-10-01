@@ -449,12 +449,12 @@ _cl_command_queue* to_native_type(_cl_command_queue* in)
     else
     {
         {
-            std::lock_guard guard(in->mut);
+            std::scoped_lock guard(in->mut);
 
             cleanup_events(*in);
         }
 
-        std::lock_guard guard(in->mut);
+        std::scoped_lock guard(in->mut);
 
         std::vector<cl_event> all_events;
 
