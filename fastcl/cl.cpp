@@ -43,6 +43,9 @@ auto& get_ptr(const char* name)
     return api.lib.get<T>(name);
 }
 
+static std::mutex cl_mem_mutex;
+static std::map<void*, uint32_t> cl_mem_ref_count;
+
 #if 0
 ///each copy of this is unique. We don't copy these, we take pointers
 ///that renders the entire ref counting mechanism basically useless, right?
@@ -978,6 +981,12 @@ _cl_program* to_native_type(_cl_program* in)
 template<typename T>
 auto from_native_type(T&& in)
 {
+    if constexpr(std::is_same_v<T, cl_mem>)
+    {
+        std::scoped_lock guard(cl_mem_mutex);
+        cl_mem_ref_count[in]++;
+    }
+
     static_assert(!std::is_same_v<T, cl_kernel> && !std::is_same_v<T, cl_program>);
 
     return in;
@@ -1154,7 +1163,7 @@ cl_int clSetKernelArgMemEx(cl_kernel kern, cl_uint arg_index, size_t arg_size, c
     return call(clSetKernelArg_ptr, kern, arg_index, arg_size, arg_value);
 }
 
-cl_int clSetKernelArg(cl_kernel kern, cl_uint arg_index, size_t arg_size, const void* arg_value)
+cl_int clSetKernelArgRaw(cl_kernel kern, cl_uint arg_index, size_t arg_size, const void* arg_value)
 {
     auto it = kern->args.find(arg_index);
 
@@ -1162,6 +1171,27 @@ cl_int clSetKernelArg(cl_kernel kern, cl_uint arg_index, size_t arg_size, const 
         kern->args.erase(it);
 
     return call(clSetKernelArg_ptr, kern, arg_index, arg_size, arg_value);
+}
+
+#include <iostream>
+
+///eg clSetKernelArg(kern, 0, sizeof(cl_mem), &cl_mem)
+///ie clSetKernelArg(kern, 0, sizeof(cl_mem), &&_cl_mem)
+cl_int clSetKernelArg(cl_kernel kern, cl_uint arg_index, size_t arg_size, const void* arg_value)
+{
+    bool is_mem_object = false;
+
+    {
+        std::scoped_lock guard(cl_mem_mutex);
+
+        void* real_pointer = *(void**)arg_value;
+        is_mem_object = cl_mem_ref_count.find(real_pointer) != cl_mem_ref_count.end();
+    }
+
+    if(is_mem_object)
+        return clSetKernelArgMemEx(kern, arg_index, arg_size, arg_value);
+    else
+        return clSetKernelArgRaw(kern, arg_index, arg_size, arg_value);
 }
 
 cl_int clFlush(cl_command_queue command_queue)
@@ -1443,6 +1473,33 @@ cl_int clGetKernelArgInfo(cl_kernel kernel, cl_uint arg_index, cl_kernel_arg_inf
     return CL_KERNEL_ARG_INFO_NOT_AVAILABLE;
 }
 
+cl_int clRetainMemObject(cl_mem memobject)
+{
+    {
+        std::scoped_lock guard(cl_mem_mutex);
+
+        cl_mem_ref_count[(void*)memobject]++;
+    }
+
+    return clRetainMemObject_ptr(memobject);
+}
+
+cl_int clReleaseMemObject(cl_mem memobject)
+{
+    {
+        std::scoped_lock guard(cl_mem_mutex);
+
+        cl_mem_ref_count[(void*)memobject]--;
+
+        if(cl_mem_ref_count[(void*)memobject] == 0)
+        {
+            cl_mem_ref_count.erase(cl_mem_ref_count.find((void*)memobject));
+        }
+    }
+
+    return clReleaseMemObject_ptr(memobject);
+}
+
 #define NAME_TYPE(name, idx) std::remove_cvref_t<decltype(std::get<idx>(detect_args(name##_ptr)))>
 #define NAME_RETURN(name) std::remove_cvref_t<decltype(detect_return(name##_ptr))>
 
@@ -1496,8 +1553,8 @@ SHIM_6(clCreatePipe);
 SHIM_6(clCreateBufferWithProperties);
 SHIM_7(clCreateImageWithProperties);
 #endif
-SHIM_1(clRetainMemObject);
-SHIM_1(clReleaseMemObject);
+//SHIM_1(clRetainMemObject);
+//SHIM_1(clReleaseMemObject);
 SHIM_6(clGetSupportedImageFormats);
 SHIM_5(clGetMemObjectInfo);
 SHIM_5(clGetImageInfo);
