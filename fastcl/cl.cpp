@@ -1136,10 +1136,20 @@ cl_int clEnqueueNDRangeKernel(cl_command_queue command_queue, cl_kernel kernel, 
     return ret;
 }
 
+cl_int clSetKernelArgRaw(cl_kernel kern, cl_uint arg_index, size_t arg_size, const void* arg_value)
+{
+    auto it = kern->args.find(arg_index);
+
+    if(it != kern->args.end())
+        kern->args.erase(it);
+
+    return call(clSetKernelArg_ptr, kern, arg_index, arg_size, arg_value);
+}
+
 cl_int clSetKernelArgMemEx(cl_kernel kern, cl_uint arg_index, size_t arg_size, const void* arg_value)
 {
     if(arg_value == nullptr)
-        return clSetKernelArg(kern, arg_index, arg_size, arg_value);
+        return clSetKernelArgRaw(kern, arg_index, arg_size, arg_value);
 
     bool read_only = false;
 
@@ -1154,21 +1164,11 @@ cl_int clSetKernelArgMemEx(cl_kernel kern, cl_uint arg_index, size_t arg_size, c
     cl_mem arg = *(cl_mem*)arg_value;
 
     if(arg == nullptr)
-        return clSetKernelArg(kern, arg_index, arg_size, arg_value);
+        return clSetKernelArgRaw(kern, arg_index, arg_size, arg_value);
 
     kern->args[arg_index] = {read_only, arg};
 
     assert(arg_size == sizeof(cl_mem));
-
-    return call(clSetKernelArg_ptr, kern, arg_index, arg_size, arg_value);
-}
-
-cl_int clSetKernelArgRaw(cl_kernel kern, cl_uint arg_index, size_t arg_size, const void* arg_value)
-{
-    auto it = kern->args.find(arg_index);
-
-    if(it != kern->args.end())
-        kern->args.erase(it);
 
     return call(clSetKernelArg_ptr, kern, arg_index, arg_size, arg_value);
 }
