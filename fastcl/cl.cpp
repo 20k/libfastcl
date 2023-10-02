@@ -1173,8 +1173,6 @@ cl_int clSetKernelArgRaw(cl_kernel kern, cl_uint arg_index, size_t arg_size, con
     return call(clSetKernelArg_ptr, kern, arg_index, arg_size, arg_value);
 }
 
-#include <iostream>
-
 ///eg clSetKernelArg(kern, 0, sizeof(cl_mem), &cl_mem)
 ///ie clSetKernelArg(kern, 0, sizeof(cl_mem), &&_cl_mem)
 cl_int clSetKernelArg(cl_kernel kern, cl_uint arg_index, size_t arg_size, const void* arg_value)
