@@ -389,10 +389,25 @@ struct _cl_command_queue : ref_counting
     {
         is_managed_queue = true;
 
-        cl_command_queue_properties props[] = {0};
+        std::vector<cl_command_queue_properties> props;
+
+        for(int i=0; i < (int)properties.size(); i+=2)
+        {
+            if(properties[i] & CL_QUEUE_PROPERTIES)
+            {
+                props.push_back(CL_QUEUE_PROPERTIES);
+
+                auto prop = properties[i + 1];
+                prop &= ~CL_QUEUE_MULTITHREADED;
+
+                props.push_back(prop);
+            }
+        }
+
+        props.push_back(0);
 
         ///out of order queue?
-        accessory = clCreateCommandQueueWithProperties_ptr(ctx, device, props, errcode_ret);
+        accessory = clCreateCommandQueueWithProperties_ptr(ctx, device, props.data(), errcode_ret);
 
         assert(*errcode_ret == CL_SUCCESS);
 
@@ -400,7 +415,7 @@ struct _cl_command_queue : ref_counting
 
         for(int i=0; i < max_queues; i++)
         {
-            queues.push_back(clCreateCommandQueueWithProperties_ptr(ctx, device, props, errcode_ret));
+            queues.push_back(clCreateCommandQueueWithProperties_ptr(ctx, device, props.data(), errcode_ret));
 
             assert(*errcode_ret == CL_SUCCESS);
         }
@@ -710,18 +725,9 @@ cl_command_queue clCreateCommandQueueWithProperties(cl_context ctx, cl_device_id
 
 cl_command_queue clCreateCommandQueue(cl_context ctx, cl_device_id device, cl_command_queue_properties props, cl_int* errcode_ret)
 {
-    if(props != 0)
-    {
-        cl_queue_properties compat_props[] = {CL_QUEUE_PROPERTIES, props, 0};
+    cl_queue_properties compat_props[] = {CL_QUEUE_PROPERTIES, props, 0};
 
-        return clCreateCommandQueueWithProperties(ctx, device, compat_props, errcode_ret);
-    }
-    else
-    {
-        cl_queue_properties compat_props[] = {0};
-
-        return clCreateCommandQueueWithProperties(ctx, device, compat_props, errcode_ret);
-    }
+    return clCreateCommandQueueWithProperties(ctx, device, compat_props, errcode_ret);
 }
 
 cl_int clRetainCommandQueue(cl_command_queue cqueue)
