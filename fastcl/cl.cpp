@@ -466,34 +466,7 @@ _cl_command_queue* to_native_type(_cl_command_queue* in)
     }
     else
     {
-        {
-            std::scoped_lock guard(in->mut);
-
-            cleanup_events(*in);
-        }
-
-        std::scoped_lock guard(in->mut);
-
-        std::vector<cl_event> all_events;
-
-        for(auto& i : in->event_history)
-        {
-            all_events.push_back(std::get<0>(i));
-        }
-
-        ///enqueue a marker on the 0th queue that synchronises all other queues, so that we can dump work into the 0th queue again
-        ///this assumes an in order queue
-        cl_event evt = nullptr;
-        clEnqueueMarkerWithWaitList_ptr(in->queues[0], all_events.size(), all_events.data(), &evt);
-
-        assert(evt);
-
-        access_storage store;
-        store.is_barrier = true;
-
-        in->event_history.push_back({evt, store, "compat"});
-
-        return in->queues[0];
+        assert(false);
     }
 }
 
@@ -534,6 +507,8 @@ void cleanup_events(_cl_command_queue& pqueue)
 
         if(is_event_finished(test))
         {
+            clWaitForEvents(1, &test);
+
             auto [found_event, found_store, unused] = pqueue.event_history[i];
 
             clReleaseEvent_ptr(found_event);
@@ -548,7 +523,7 @@ void cleanup_events(_cl_command_queue& pqueue)
 
 
 template<typename T>
-auto add_single(_cl_command_queue& pqueue, T&& func, cl_mem obj, const std::vector<cl_event>& events, cl_event* external_event, bool read_only = false)
+auto add_single(_cl_command_queue& pqueue, T&& func, std::vector<cl_mem> obj, const std::vector<cl_event>& events, cl_event* external_event, bool read_only = false)
 {
     if(!pqueue.is_managed_queue)
     {
@@ -564,7 +539,11 @@ auto add_single(_cl_command_queue& pqueue, T&& func, cl_mem obj, const std::vect
     }
 
     access_storage store;
-    store.add(read_only, obj);
+
+    for(auto& i : obj)
+    {
+        store.add(read_only, i);
+    }
 
     {
         std::scoped_lock lock(pqueue.mut);
@@ -574,7 +553,14 @@ auto add_single(_cl_command_queue& pqueue, T&& func, cl_mem obj, const std::vect
 
     std::scoped_lock lock(pqueue.mut);
 
-    std::vector<cl_event> evts = get_implicit_dependencies(pqueue, obj, read_only);
+    std::vector<cl_event> evts;
+
+    for(auto& i : obj)
+    {
+        auto next_events = get_implicit_dependencies(pqueue, i, read_only);;
+
+        evts.insert(evts.end(), next_events.begin(), next_events.end());
+    }
 
     evts.insert(evts.end(), events.begin(), events.end());
 
@@ -584,6 +570,7 @@ auto add_single(_cl_command_queue& pqueue, T&& func, cl_mem obj, const std::vect
     cl_event next = nullptr;
 
     auto result = func(exec_on, evts, next);
+    clFlush_ptr(exec_on);
 
     assert(next);
 
@@ -624,7 +611,7 @@ cl_int clEnqueueReadBuffer(cl_command_queue pqueue, cl_mem buffer, cl_bool block
     return add_single(*pqueue, [&](cl_command_queue native_queue, const std::vector<cl_event>& evts, cl_event& out)
     {
         return clEnqueueReadBuffer_ptr(native_queue, buffer, blocking_read, offset, size, ptr, evts.size(), evts.data(), &out);
-    }, buffer, native_events, event, true);
+    }, {buffer}, native_events, event, true);
 }
 
 cl_int clEnqueueWriteBuffer(cl_command_queue pqueue, cl_mem buffer, cl_bool blocking_write, size_t offset, size_t size, const void* ptr, cl_uint num_events_in_wait_list, const cl_event* event_wait_list, cl_event* event)
@@ -634,7 +621,7 @@ cl_int clEnqueueWriteBuffer(cl_command_queue pqueue, cl_mem buffer, cl_bool bloc
     return add_single(*pqueue, [&](cl_command_queue native_queue, const std::vector<cl_event>& evts, cl_event& out)
     {
         return clEnqueueWriteBuffer_ptr(native_queue, buffer, blocking_write, offset, size, ptr, evts.size(), evts.data(), &out);
-    }, buffer, native_events, event);
+    }, {buffer}, native_events, event);
 }
 
 cl_int clEnqueueFillBuffer(cl_command_queue pqueue, cl_mem buffer, const void* pattern, size_t pattern_size, size_t offset, size_t size, cl_uint num_events_in_wait_list, const cl_event* event_wait_list, cl_event* event)
@@ -644,7 +631,99 @@ cl_int clEnqueueFillBuffer(cl_command_queue pqueue, cl_mem buffer, const void* p
     return add_single(*pqueue, [&](cl_command_queue native_queue, const std::vector<cl_event>& evts, cl_event& out)
     {
         return clEnqueueFillBuffer_ptr(native_queue, buffer, pattern, pattern_size, offset, size, evts.size(), evts.data(), &out);
-    }, buffer, native_events, event);
+    }, {buffer}, native_events, event);
+}
+
+cl_int clEnqueueFillImage(cl_command_queue   command_queue,
+                   cl_mem             image,
+                   const void *       fill_color,
+                   const size_t *     origin,
+                   const size_t *     region,
+                   cl_uint            num_events_in_wait_list,
+                   const cl_event *   event_wait_list,
+                   cl_event *         event)
+{
+    auto native_events = make_events(num_events_in_wait_list, event_wait_list);
+
+    return add_single(*command_queue, [&](cl_command_queue native_queue, const std::vector<cl_event>& evts, cl_event& out)
+    {
+        return clEnqueueFillImage_ptr(native_queue, image, fill_color, origin, region, evts.size(), evts.data(), &out);
+    }, {image}, native_events, event);
+}
+
+cl_int
+clEnqueueReadImage(cl_command_queue     command_queue,
+                   cl_mem               image,
+                   cl_bool              blocking_read,
+                   const size_t *       origin,
+                   const size_t *       region,
+                   size_t               row_pitch,
+                   size_t               slice_pitch,
+                   void *               ptr,
+                   cl_uint              num_events_in_wait_list,
+                   const cl_event *     event_wait_list,
+                   cl_event *           event)
+{
+    auto native_events = make_events(num_events_in_wait_list, event_wait_list);
+
+    return add_single(*command_queue, [&](cl_command_queue native_queue, const std::vector<cl_event>& evts, cl_event& out)
+    {
+        return clEnqueueReadImage_ptr(native_queue, image, blocking_read, origin, region, row_pitch, slice_pitch, ptr, evts.size(), evts.data(), &out);
+    }, {image}, native_events, event);
+}
+
+cl_int
+clEnqueueCopyBuffer(cl_command_queue    command_queue,
+                    cl_mem              src_buffer,
+                    cl_mem              dst_buffer,
+                    size_t              src_offset,
+                    size_t              dst_offset,
+                    size_t              size,
+                    cl_uint             num_events_in_wait_list,
+                    const cl_event *    event_wait_list,
+                    cl_event *          event)
+{
+    auto native_events = make_events(num_events_in_wait_list, event_wait_list);
+
+    return add_single(*command_queue, [&](cl_command_queue native_queue, const std::vector<cl_event>& evts, cl_event& out)
+    {
+        return clEnqueueCopyBuffer_ptr(native_queue, src_buffer, dst_buffer, src_offset, dst_offset, size, evts.size(), evts.data(), &out);
+    }, {src_buffer, dst_buffer}, native_events, event);
+}
+
+cl_int
+clEnqueueWriteImage(cl_command_queue    command_queue,
+                    cl_mem              image,
+                    cl_bool             blocking_write,
+                    const size_t *      origin,
+                    const size_t *      region,
+                    size_t              input_row_pitch,
+                    size_t              input_slice_pitch,
+                    const void *        ptr,
+                    cl_uint             num_events_in_wait_list,
+                    const cl_event *    event_wait_list,
+                    cl_event *          event)
+{
+    auto native_events = make_events(num_events_in_wait_list, event_wait_list);
+
+    return add_single(*command_queue, [&](cl_command_queue native_queue, const std::vector<cl_event>& evts, cl_event& out)
+    {
+        return clEnqueueWriteImage_ptr(native_queue, image, blocking_write, origin, region, input_row_pitch, input_slice_pitch, ptr, evts.size(), evts.data(), &out);
+    }, {image}, native_events, event);
+}
+
+cl_int
+clEnqueueMarkerWithWaitList(cl_command_queue  command_queue,
+                            cl_uint           num_events_in_wait_list,
+                            const cl_event *  event_wait_list,
+                            cl_event *        event)
+{
+    auto native_events = make_events(num_events_in_wait_list, event_wait_list);
+
+    return add_single(*command_queue, [&](cl_command_queue native_queue, const std::vector<cl_event>& evts, cl_event& out)
+    {
+        return clEnqueueMarkerWithWaitList_ptr(native_queue, evts.size(), evts.data(), &out);
+    }, {}, native_events, event);
 }
 
 cl_int clEnqueueAcquireGLObjects(cl_command_queue pqueue, cl_uint num_objects, const cl_mem* mem_objects, cl_uint num_events_in_wait_list, const cl_event* event_wait_list, cl_event* event)
@@ -656,7 +735,7 @@ cl_int clEnqueueAcquireGLObjects(cl_command_queue pqueue, cl_uint num_objects, c
         cl_int cret = add_single(*pqueue, [&](cl_command_queue native_queue, const std::vector<cl_event>& evts, cl_event& out)
         {
             return clEnqueueAcquireGLObjects_ptr(native_queue, 1, &mem_objects[i], evts.size(), evts.data(), &out);
-        }, mem_objects[i], native_events, event);
+        }, {mem_objects[i]}, native_events, event);
 
         if(cret != CL_SUCCESS)
             return cret;
@@ -674,7 +753,7 @@ cl_int clEnqueueReleaseGLObjects(cl_command_queue pqueue, cl_uint num_objects, c
         cl_int cret = add_single(*pqueue, [&](cl_command_queue native_queue, const std::vector<cl_event>& evts, cl_event& out)
         {
             return clEnqueueReleaseGLObjects_ptr(native_queue, 1, &mem_objects[i], evts.size(), evts.data(), &out);
-        }, mem_objects[i], native_events, event);
+        }, {mem_objects[i]}, native_events, event);
 
         if(cret != CL_SUCCESS)
             return cret;
@@ -1606,42 +1685,42 @@ SHIM_5(clGetEventProfilingInfo);
 //SHIM_1(clFlush);
 //SHIM_1(clFinish);
 //SHIM_9(clEnqueueReadBuffer);
-SHIM_14(clEnqueueReadBufferRect);
+//SHIM_14(clEnqueueReadBufferRect);
 //SHIM_9(clEnqueueWriteBuffer);
-SHIM_14(clEnqueueWriteBufferRect);
+//SHIM_14(clEnqueueWriteBufferRect);
 //SHIM_9(clEnqueueFillBuffer);
-SHIM_9(clEnqueueCopyBuffer);
-SHIM_13(clEnqueueCopyBufferRect);
-SHIM_11(clEnqueueReadImage);
-SHIM_11(clEnqueueWriteImage);
-SHIM_8(clEnqueueFillImage);
-SHIM_9(clEnqueueCopyImage);
-SHIM_9(clEnqueueCopyImageToBuffer);
-SHIM_9(clEnqueueCopyBufferToImage);
-SHIM_10(clEnqueueMapBuffer);
-SHIM_12(clEnqueueMapImage);
-SHIM_6(clEnqueueUnmapMemObject);
-SHIM_7(clEnqueueMigrateMemObjects);
+//SHIM_9(clEnqueueCopyBuffer);
+//SHIM_13(clEnqueueCopyBufferRect);
+//SHIM_11(clEnqueueReadImage);
+//SHIM_11(clEnqueueWriteImage);
+//SHIM_8(clEnqueueFillImage);
+//SHIM_9(clEnqueueCopyImage);
+//SHIM_9(clEnqueueCopyImageToBuffer);
+//SHIM_9(clEnqueueCopyBufferToImage);
+//SHIM_10(clEnqueueMapBuffer);
+//SHIM_12(clEnqueueMapImage);
+//SHIM_6(clEnqueueUnmapMemObject);
+//SHIM_7(clEnqueueMigrateMemObjects);
 //SHIM_9(clEnqueueNDRangeKernel);
-SHIM_10(clEnqueueNativeKernel);
-SHIM_4(clEnqueueMarkerWithWaitList);
-SHIM_4(clEnqueueBarrierWithWaitList);
-SHIM_8(clEnqueueSVMFree);
-SHIM_8(clEnqueueSVMMemcpy);
-SHIM_8(clEnqueueSVMMemFill);
-SHIM_8(clEnqueueSVMMap);
-SHIM_5(clEnqueueSVMUnmap);
-SHIM_8(clEnqueueSVMMigrateMem);
+//SHIM_10(clEnqueueNativeKernel);
+//SHIM_4(clEnqueueMarkerWithWaitList);
+//SHIM_4(clEnqueueBarrierWithWaitList);
+//SHIM_8(clEnqueueSVMFree);
+//SHIM_8(clEnqueueSVMMemcpy);
+//SHIM_8(clEnqueueSVMMemFill);
+//SHIM_8(clEnqueueSVMMap);
+//SHIM_5(clEnqueueSVMUnmap);
+//SHIM_8(clEnqueueSVMMigrateMem);
 SHIM_8(clCreateImage2D);
 SHIM_10(clCreateImage3D);
-SHIM_2(clEnqueueMarker);
-SHIM_3(clEnqueueWaitForEvents);
-SHIM_1(clEnqueueBarrier);
-SHIM_0(clUnloadCompiler);
+//SHIM_2(clEnqueueMarker);
+//SHIM_3(clEnqueueWaitForEvents);
+//SHIM_1(clEnqueueBarrier);
+//SHIM_0(clUnloadCompiler);
 //SHIM_1(clGetExtensionFunctionAddress);
 //SHIM_4(clCreateCommandQueue);
 SHIM_5(clCreateSampler);
-SHIM_5(clEnqueueTask);
+//SHIM_5(clEnqueueTask);
 
 SHIM_6(clCreateFromGLTexture);
 //SHIM_6(clEnqueueAcquireGLObjects);
