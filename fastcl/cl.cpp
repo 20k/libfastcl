@@ -1,3 +1,4 @@
+#define BOOST_DLL_USE_STD_FS
 #include <boost/dll/import.hpp>
 #include <boost/dll/shared_library.hpp>
 #define CL_USE_DEPRECATED_OPENCL_1_1_APIS
@@ -14,6 +15,9 @@
 #include <nlohmann/json.hpp>
 #include <boost/smart_ptr/intrusive_ptr.hpp>
 #include <boost/smart_ptr/intrusive_ref_counter.hpp>
+
+#include <atomic>
+#include <mutex>
 
 template<typename T>
 auto to_native_type(T&& in)
