@@ -1248,6 +1248,9 @@ cl_int clSetKernelArgMemEx(cl_kernel kern, cl_uint arg_index, size_t arg_size, c
 
         if(qual & CL_KERNEL_ARG_TYPE_CONST)
             read_only = true;
+
+        if(qual & CL_KERNEL_ARG_ACCESS_READ_ONLY)
+            read_only = true;
     }
 
     cl_mem arg = *(cl_mem*)arg_value;
