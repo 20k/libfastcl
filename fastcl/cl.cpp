@@ -717,6 +717,25 @@ clEnqueueWriteImage(cl_command_queue    command_queue,
 }
 
 cl_int
+clEnqueueCopyImage(cl_command_queue     command_queue,
+                   cl_mem               src_image,
+                   cl_mem               dst_image,
+                   const size_t *       src_origin,
+                   const size_t *       dst_origin,
+                   const size_t *       region,
+                   cl_uint              num_events_in_wait_list,
+                   const cl_event *     event_wait_list,
+                   cl_event *           event)
+{
+    auto native_events = make_events(num_events_in_wait_list, event_wait_list);
+
+    return add_single(*command_queue, [&](cl_command_queue native_queue, const std::vector<cl_event>& evts, cl_event& out)
+    {
+        return clEnqueueCopyImage_ptr(native_queue, src_image, dst_image, src_origin, dst_origin, region, evts.size(), evts.data(), &out);
+    }, {src_image, dst_image}, native_events, event);
+}
+
+cl_int
 clEnqueueMarkerWithWaitList(cl_command_queue  command_queue,
                             cl_uint           num_events_in_wait_list,
                             const cl_event *  event_wait_list,
