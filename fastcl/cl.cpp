@@ -527,8 +527,10 @@ void cleanup_events(_cl_command_queue& pqueue)
 
 
 template<typename T>
-auto add_single(_cl_command_queue& pqueue, T&& func, std::vector<cl_mem> obj, const std::vector<cl_event>& events, cl_event* external_event, bool read_only = false)
+auto add_single(_cl_command_queue& pqueue, T&& func, std::vector<cl_mem> obj, const std::vector<cl_event>& events, cl_event* external_event, std::vector<bool> v_read_only = {})
 {
+    assert(v_read_only.size() <= obj.size());
+
     if(!pqueue.is_managed_queue)
     {
         cl_event evt = nullptr;
@@ -544,9 +546,14 @@ auto add_single(_cl_command_queue& pqueue, T&& func, std::vector<cl_mem> obj, co
 
     access_storage store;
 
-    for(auto& i : obj)
+    for(int kk=0; kk < (int)obj.size(); kk++)
     {
-        store.add(read_only, i);
+        bool read_only = false;
+
+        if(kk < (int)v_read_only.size())
+            read_only = v_read_only[kk];
+
+        store.add(read_only, obj[kk]);
     }
 
     {
@@ -559,9 +566,14 @@ auto add_single(_cl_command_queue& pqueue, T&& func, std::vector<cl_mem> obj, co
 
     std::vector<cl_event> evts;
 
-    for(auto& i : obj)
+    for(int kk=0; kk < (int)obj.size(); kk++)
     {
-        auto next_events = get_implicit_dependencies(pqueue, i, read_only);;
+        bool read_only = false;
+
+        if(kk < (int)v_read_only.size())
+            read_only = v_read_only[kk];
+
+        auto next_events = get_implicit_dependencies(pqueue, obj[kk], read_only);
 
         evts.insert(evts.end(), next_events.begin(), next_events.end());
     }
@@ -615,7 +627,7 @@ cl_int clEnqueueReadBuffer(cl_command_queue pqueue, cl_mem buffer, cl_bool block
     return add_single(*pqueue, [&](cl_command_queue native_queue, const std::vector<cl_event>& evts, cl_event& out)
     {
         return clEnqueueReadBuffer_ptr(native_queue, buffer, blocking_read, offset, size, ptr, evts.size(), evts.data(), &out);
-    }, {buffer}, native_events, event, true);
+    }, {buffer}, native_events, event, {true});
 }
 
 cl_int clEnqueueWriteBuffer(cl_command_queue pqueue, cl_mem buffer, cl_bool blocking_write, size_t offset, size_t size, const void* ptr, cl_uint num_events_in_wait_list, const cl_event* event_wait_list, cl_event* event)
@@ -692,7 +704,7 @@ clEnqueueCopyBuffer(cl_command_queue    command_queue,
     return add_single(*command_queue, [&](cl_command_queue native_queue, const std::vector<cl_event>& evts, cl_event& out)
     {
         return clEnqueueCopyBuffer_ptr(native_queue, src_buffer, dst_buffer, src_offset, dst_offset, size, evts.size(), evts.data(), &out);
-    }, {src_buffer, dst_buffer}, native_events, event);
+    }, {src_buffer, dst_buffer}, native_events, event, {true, false});
 }
 
 cl_int
@@ -732,7 +744,7 @@ clEnqueueCopyImage(cl_command_queue     command_queue,
     return add_single(*command_queue, [&](cl_command_queue native_queue, const std::vector<cl_event>& evts, cl_event& out)
     {
         return clEnqueueCopyImage_ptr(native_queue, src_image, dst_image, src_origin, dst_origin, region, evts.size(), evts.data(), &out);
-    }, {src_image, dst_image}, native_events, event);
+    }, {src_image, dst_image}, native_events, event, {true, false});
 }
 
 cl_int
