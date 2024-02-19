@@ -1302,6 +1302,7 @@ cl_int clSetKernelArg(cl_kernel kern, cl_uint arg_index, size_t arg_size, const 
 {
     bool is_mem_object = false;
 
+    if(arg_value)
     {
         std::scoped_lock guard(cl_mem_mutex);
 
