@@ -1327,7 +1327,7 @@ cl_int clFlush(cl_command_queue command_queue)
     }
 
     {
-        std::scoped_lock(command_queue->mut);
+        std::scoped_lock guard(command_queue->mut);
         cleanup_events(*command_queue);
     }
 
@@ -1345,7 +1345,7 @@ cl_int clFinish(cl_command_queue command_queue)
     }
 
     {
-        std::scoped_lock(command_queue->mut);
+        std::scoped_lock guard(command_queue->mut);
         cleanup_events(*command_queue);
     }
 
