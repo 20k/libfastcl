@@ -13,8 +13,6 @@
 #define CL_QUEUE_MULTITHREADED (1 << 9)
 
 #include <nlohmann/json.hpp>
-#include <boost/smart_ptr/intrusive_ptr.hpp>
-#include <boost/smart_ptr/intrusive_ref_counter.hpp>
 
 #include <atomic>
 #include <mutex>
